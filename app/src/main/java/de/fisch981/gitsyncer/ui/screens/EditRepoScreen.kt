@@ -1,5 +1,8 @@
 package de.fisch981.gitsyncer.ui.screens
 
+import android.content.ClipboardManager
+import android.content.Context
+import android.content.Intent
 import android.net.Uri
 import android.os.Environment
 import android.widget.Toast
@@ -202,16 +205,65 @@ fun EditRepoScreen(
                                 placeholder = { Text("ghp_... oder glpat-...") },
                                 visualTransformation = if (isPasswordVisible) VisualTransformation.None else PasswordVisualTransformation(),
                                 trailingIcon = {
-                                    IconButton(onClick = { isPasswordVisible = !isPasswordVisible }) {
-                                        Icon(
-                                            if (isPasswordVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility,
-                                            contentDescription = null
-                                        )
+                                    Row {
+                                        IconButton(onClick = {
+                                            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                            val clip = clipboard.primaryClip
+                                            if (clip != null && clip.itemCount > 0) {
+                                                val pasted = clip.getItemAt(0).text?.toString() ?: ""
+                                                if (pasted.isNotBlank()) {
+                                                    tokenOrPassword = pasted.trim()
+                                                    Toast.makeText(context, "Aus Zwischenablage eingefügt", Toast.LENGTH_SHORT).show()
+                                                }
+                                            }
+                                        }) {
+                                            Icon(Icons.Default.ContentPaste, contentDescription = "Einfügen")
+                                        }
+                                        IconButton(onClick = { isPasswordVisible = !isPasswordVisible }) {
+                                            Icon(
+                                                if (isPasswordVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                                                contentDescription = null
+                                            )
+                                        }
                                     }
                                 },
                                 singleLine = true,
                                 modifier = Modifier.fillMaxWidth()
                             )
+
+                            Spacer(modifier = Modifier.height(4.dp))
+
+                            // One-click button to open GitHub Token generator in Browser
+                            Button(
+                                onClick = {
+                                    val url = "https://github.com/settings/tokens/new?description=GitSyncer&scopes=repo"
+                                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
+                                    context.startActivity(intent)
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = ButtonDefaults.filledTonalButtonColors()
+                            ) {
+                                Icon(Icons.Default.OpenInBrowser, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("GitHub Token im Browser erstellen (1-Klick)")
+                            }
+
+                            Card(
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                            ) {
+                                Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    Text("💡 Anleitung für das GitHub Token:", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodySmall)
+                                    Text(
+                                        "1. Tippe auf den Button oben – dein Browser öffnet direkt die GitHub-Tokenseite.\n" +
+                                        "2. Der Haken bei 'repo' (Repository-Zugriff) ist bereits vorausgewählt.\n" +
+                                        "3. Scrolle ganz nach unten und klicke auf den grünen Button 'Generate token'.\n" +
+                                        "4. Kopiere das angezeigte Token (beginnt mit 'ghp_') und füge es hier ein.",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
                         }
                         AuthType.HTTPS_CREDENTIALS -> {
                             OutlinedTextField(

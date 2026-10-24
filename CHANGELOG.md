@@ -6,6 +6,11 @@ und dieses Projekt hält sich an [Semantic Versioning](https://semver.org/lang/d
 
 ---
 
+## [1.0.1] - 2026-10-24
+
+### Geändert / Hinzugefügt
+- Direkte 1-Klick GitHub Token-Generierung im Browser und Clipboard-Einfuegen hinzugefuegt
+
 ## [1.0.0] - 2026-10-24
 
 ### Hinzugefügt
