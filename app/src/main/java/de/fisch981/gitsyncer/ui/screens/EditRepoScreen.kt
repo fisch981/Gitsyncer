@@ -8,7 +8,11 @@ import android.os.Environment
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -18,14 +22,21 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import de.fisch981.gitsyncer.data.GitHubApiClient
+import de.fisch981.gitsyncer.data.GitHubRepo
 import de.fisch981.gitsyncer.data.RepositoryStore
 import de.fisch981.gitsyncer.git.GitManager
 import de.fisch981.gitsyncer.model.*
 import de.fisch981.gitsyncer.sync.SyncScheduler
+import de.fisch981.gitsyncer.ui.theme.GitGreen
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -42,7 +53,12 @@ fun EditRepoScreen(
     val coroutineScope = rememberCoroutineScope()
     val repoStore = remember { RepositoryStore.getInstance(context) }
     val gitManager = remember { GitManager(context) }
+    val api = remember { GitHubApiClient() }
+
     val sshKeys by repoStore.sshKeys.collectAsState()
+    val globalToken by repoStore.githubToken.collectAsState()
+    val globalUser by repoStore.githubUser.collectAsState()
+    val defaultBaseDir by repoStore.defaultBaseDir.collectAsState()
 
     val existingRepo = remember(repoId) {
         if (repoId != null) repoStore.getRepository(repoId) else null
@@ -52,24 +68,42 @@ fun EditRepoScreen(
     var remoteUrl by remember { mutableStateOf(existingRepo?.remoteUrl ?: "") }
     var localPath by remember {
         mutableStateOf(
-            existingRepo?.localPath ?: "${Environment.getExternalStorageDirectory().absolutePath}/Documents/GitSyncVault"
+            existingRepo?.localPath ?: if (name.isNotBlank()) "$defaultBaseDir/$name" else defaultBaseDir
         )
     }
     var branch by remember { mutableStateOf(existingRepo?.branch ?: "main") }
     var authType by remember { mutableStateOf(existingRepo?.authType ?: AuthType.HTTPS_TOKEN) }
-    var tokenOrPassword by remember { mutableStateOf(existingRepo?.tokenOrPassword ?: "") }
-    var username by remember { mutableStateOf(existingRepo?.username ?: "") }
+    var tokenOrPassword by remember {
+        mutableStateOf(
+            existingRepo?.tokenOrPassword ?: globalToken
+        )
+    }
+    var username by remember {
+        mutableStateOf(
+            existingRepo?.username ?: globalUser
+        )
+    }
     var selectedSshKeyId by remember { mutableStateOf(existingRepo?.sshKeyId ?: sshKeys.firstOrNull()?.id) }
     var autoSyncEnabled by remember { mutableStateOf(existingRepo?.autoSyncEnabled ?: true) }
     var syncIntervalMinutes by remember { mutableStateOf(existingRepo?.syncIntervalMinutes ?: 60) }
     var syncDirection by remember { mutableStateOf(existingRepo?.syncDirection ?: SyncDirection.TWO_WAY) }
     var autoCommitMessage by remember { mutableStateOf(existingRepo?.autoCommitMessage ?: "Sync %timestamp%") }
-    var authorName by remember { mutableStateOf(existingRepo?.authorName ?: "GitSyncer") }
+    var authorName by remember {
+        mutableStateOf(
+            existingRepo?.authorName ?: if (globalUser.isNotBlank()) globalUser else "GitSyncer"
+        )
+    }
     var authorEmail by remember { mutableStateOf(existingRepo?.authorEmail ?: "gitsyncer@fisch981.de") }
 
     var isPasswordVisible by remember { mutableStateOf(false) }
     var isCloning by remember { mutableStateOf(false) }
     var statusText by remember { mutableStateOf("") }
+
+    // GitHub Repo Selector Dialog State
+    var showGithubPicker by remember { mutableStateOf(false) }
+    var githubRepos by remember { mutableStateOf<List<GitHubRepo>>(emptyList()) }
+    var isFetchingRepos by remember { mutableStateOf(false) }
+    var repoFilter by remember { mutableStateOf("") }
 
     // Folder picker launcher
     val folderPickerLauncher = rememberLauncherForActivityResult(
@@ -123,6 +157,72 @@ fun EditRepoScreen(
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
+            // GitHub Quick Import Card (for new repositories)
+            if (existingRepo == null) {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
+                ) {
+                    Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                Icons.Default.CloudDownload,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                                modifier = Modifier.size(24.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                "Aus GitHub importieren",
+                                fontWeight = FontWeight.Bold,
+                                style = MaterialTheme.typography.titleMedium,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer
+                            )
+                        }
+
+                        Text(
+                            if (globalToken.isNotBlank()) {
+                                "Mit deinem hinterlegten GitHub-Account (@${globalUser.ifBlank { "User" }}) verbunden. Wähle ein Repository aus deiner Liste:"
+                            } else {
+                                "Hinterlege dein GitHub-Token, um alle deine Repositories direkt auf Knopfdruck anzuzeigen und ohne Tippen zu übernehmen."
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer
+                        )
+
+                        Button(
+                            onClick = {
+                                val tokenToUse = if (tokenOrPassword.isNotBlank()) tokenOrPassword else globalToken
+                                if (tokenToUse.isBlank()) {
+                                    Toast.makeText(context, "Bitte zuerst ein GitHub-Token hinterlegen!", Toast.LENGTH_LONG).show()
+                                    return@Button
+                                }
+                                showGithubPicker = true
+                                isFetchingRepos = true
+                                coroutineScope.launch {
+                                    val result = api.listUserRepos(tokenToUse)
+                                    isFetchingRepos = false
+                                    result.onSuccess { list ->
+                                        githubRepos = list
+                                    }.onFailure { err ->
+                                        Toast.makeText(context, "Fehler beim Laden: ${err.localizedMessage}", Toast.LENGTH_LONG).show()
+                                    }
+                                }
+                            },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = MaterialTheme.colorScheme.surface,
+                                contentColor = MaterialTheme.colorScheme.primary
+                            ),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(Icons.Default.List, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("GitHub Repositories laden & auswählen")
+                        }
+                    }
+                }
+            }
+
             // General Info Card
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -130,7 +230,12 @@ fun EditRepoScreen(
 
                     OutlinedTextField(
                         value = name,
-                        onValueChange = { name = it },
+                        onValueChange = {
+                            name = it
+                            if (existingRepo == null && (localPath == defaultBaseDir || localPath.startsWith(defaultBaseDir))) {
+                                localPath = if (it.isNotBlank()) "$defaultBaseDir/$it" else defaultBaseDir
+                            }
+                        },
                         label = { Text("Name (z. B. Obsidian Vault)") },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
@@ -231,38 +336,32 @@ fun EditRepoScreen(
                                 modifier = Modifier.fillMaxWidth()
                             )
 
-                            Spacer(modifier = Modifier.height(4.dp))
+                            if (globalToken.isNotBlank() && tokenOrPassword != globalToken) {
+                                TextButton(
+                                    onClick = {
+                                        tokenOrPassword = globalToken
+                                        username = globalUser
+                                        Toast.makeText(context, "Zentrales GitHub Token übernommen", Toast.LENGTH_SHORT).show()
+                                    }
+                                ) {
+                                    Icon(Icons.Default.Sync, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text("Zentral hinterlegtes Token verwenden (@${globalUser.ifBlank { "GitHub" }})")
+                                }
+                            }
 
-                            // One-click button to open GitHub Token generator in Browser
-                            Button(
+                            // 1-Click Browser Button
+                            OutlinedButton(
                                 onClick = {
                                     val url = "https://github.com/settings/tokens/new?description=GitSyncer&scopes=repo"
                                     val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
                                     context.startActivity(intent)
                                 },
-                                modifier = Modifier.fillMaxWidth(),
-                                colors = ButtonDefaults.filledTonalButtonColors()
+                                modifier = Modifier.fillMaxWidth()
                             ) {
                                 Icon(Icons.Default.OpenInBrowser, contentDescription = null, modifier = Modifier.size(18.dp))
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Text("GitHub Token im Browser erstellen (1-Klick)")
-                            }
-
-                            Card(
-                                modifier = Modifier.fillMaxWidth(),
-                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
-                            ) {
-                                Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                    Text("💡 Anleitung für das GitHub Token:", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodySmall)
-                                    Text(
-                                        "1. Tippe auf den Button oben – dein Browser öffnet direkt die GitHub-Tokenseite.\n" +
-                                        "2. Der Haken bei 'repo' (Repository-Zugriff) ist bereits vorausgewählt.\n" +
-                                        "3. Scrolle ganz nach unten und klicke auf den grünen Button 'Generate token'.\n" +
-                                        "4. Kopiere das angezeigte Token (beginnt mit 'ghp_') und füge es hier ein.",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
                             }
                         }
                         AuthType.HTTPS_CREDENTIALS -> {
@@ -368,7 +467,7 @@ fun EditRepoScreen(
                         FilterChip(
                             selected = syncDirection == SyncDirection.TWO_WAY,
                             onClick = { syncDirection = SyncDirection.TWO_WAY },
-                            label = { Text("Zwei-Wege (Bidirektional)") }
+                            label = { Text("Zwei-Wege") }
                         )
                         FilterChip(
                             selected = syncDirection == SyncDirection.PUSH_ONLY,
@@ -395,7 +494,7 @@ fun EditRepoScreen(
                         OutlinedTextField(
                             value = authorName,
                             onValueChange = { authorName = it },
-                            label = { Text("Git Author Name") },
+                            label = { Text("Git Author") },
                             singleLine = true,
                             modifier = Modifier.weight(1f)
                         )
@@ -518,6 +617,152 @@ fun EditRepoScreen(
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Text("Nur Speichern (ohne Sofort-Sync)")
+            }
+        }
+    }
+
+    // GitHub Repo Selector Dialog
+    if (showGithubPicker) {
+        Dialog(
+            onDismissRequest = { showGithubPicker = false },
+            properties = DialogProperties(usePlatformDefaultWidth = false)
+        ) {
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth(0.95f)
+                    .fillMaxHeight(0.85f),
+                shape = MaterialTheme.shapes.large,
+                color = MaterialTheme.colorScheme.surface,
+                tonalElevation = 6.dp
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(16.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("GitHub Repositories auswählen", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                        IconButton(onClick = { showGithubPicker = false }) {
+                            Icon(Icons.Default.Close, contentDescription = "Schließen")
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    OutlinedTextField(
+                        value = repoFilter,
+                        onValueChange = { repoFilter = it },
+                        label = { Text("Repository suchen...") },
+                        leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    if (isFetchingRepos) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .weight(1f),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                CircularProgressIndicator()
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Text("Lade Repositories von GitHub...")
+                            }
+                        }
+                    } else {
+                        val filteredList = githubRepos.filter {
+                            it.name.contains(repoFilter, ignoreCase = true) ||
+                            (it.description?.contains(repoFilter, ignoreCase = true) == true)
+                        }
+
+                        if (filteredList.isEmpty()) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .weight(1f),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text("Keine passenden Repositories gefunden")
+                            }
+                        } else {
+                            LazyColumn(
+                                modifier = Modifier.weight(1f),
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                items(filteredList) { repo ->
+                                    Card(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clickable {
+                                                name = repo.name
+                                                remoteUrl = repo.clone_url
+                                                branch = repo.default_branch
+                                                localPath = "$defaultBaseDir/${repo.name}"
+                                                authType = AuthType.HTTPS_TOKEN
+                                                if (tokenOrPassword.isBlank()) {
+                                                    tokenOrPassword = globalToken
+                                                }
+                                                if (username.isBlank()) {
+                                                    username = globalUser
+                                                }
+                                                showGithubPicker = false
+                                                Toast.makeText(context, "'${repo.name}' übernommen!", Toast.LENGTH_SHORT).show()
+                                            }
+                                    ) {
+                                        Column(modifier = Modifier.padding(12.dp)) {
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                                    Icon(
+                                                        if (repo.private) Icons.Default.Lock else Icons.Default.Public,
+                                                        contentDescription = null,
+                                                        modifier = Modifier.size(16.dp),
+                                                        tint = if (repo.private) MaterialTheme.colorScheme.error else GitGreen
+                                                    )
+                                                    Spacer(modifier = Modifier.width(6.dp))
+                                                    Text(repo.name, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleSmall)
+                                                }
+
+                                                Surface(
+                                                    shape = MaterialTheme.shapes.extraSmall,
+                                                    color = MaterialTheme.colorScheme.surfaceVariant
+                                                ) {
+                                                    Text(
+                                                        repo.default_branch,
+                                                        fontSize = 11.sp,
+                                                        fontFamily = FontFamily.Monospace,
+                                                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                                                    )
+                                                }
+                                            }
+
+                                            if (!repo.description.isNullOrBlank()) {
+                                                Spacer(modifier = Modifier.height(4.dp))
+                                                Text(
+                                                    repo.description,
+                                                    style = MaterialTheme.typography.bodySmall,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                    maxLines = 2
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
     }

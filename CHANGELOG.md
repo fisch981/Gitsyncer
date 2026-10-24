@@ -6,6 +6,11 @@ und dieses Projekt hält sich an [Semantic Versioning](https://semver.org/lang/d
 
 ---
 
+## [1.1.0] - 2026-10-24
+
+### Geändert / Hinzugefügt
+- Zentrale GitHub-Zugangsdatenverwaltung, automatisches Auslesen aller Repositories und konfigurierbares Standard-Basisverzeichnis mit Unterordnern
+
 ## [1.0.1] - 2026-10-24
 
 ### Geändert / Hinzugefügt

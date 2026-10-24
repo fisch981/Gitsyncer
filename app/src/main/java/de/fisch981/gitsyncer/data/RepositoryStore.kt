@@ -21,9 +21,43 @@ class RepositoryStore(private val context: Context) {
     private val _sshKeys = MutableStateFlow<List<SshKeyEntry>>(emptyList())
     val sshKeys: StateFlow<List<SshKeyEntry>> = _sshKeys.asStateFlow()
 
+    private val _githubToken = MutableStateFlow("")
+    val githubToken: StateFlow<String> = _githubToken.asStateFlow()
+
+    private val _githubUser = MutableStateFlow("")
+    val githubUser: StateFlow<String> = _githubUser.asStateFlow()
+
+    private val defaultStoragePath = "${android.os.Environment.getExternalStorageDirectory().absolutePath}/Documents/GitSync"
+    private val _defaultBaseDir = MutableStateFlow(defaultStoragePath)
+    val defaultBaseDir: StateFlow<String> = _defaultBaseDir.asStateFlow()
+
     init {
         loadRepositories()
         loadSshKeys()
+        loadGlobalSettings()
+    }
+
+    private fun loadGlobalSettings() {
+        _githubToken.value = prefs.getString(KEY_GITHUB_TOKEN, "") ?: ""
+        _githubUser.value = prefs.getString(KEY_GITHUB_USER, "") ?: ""
+        _defaultBaseDir.value = prefs.getString(KEY_BASE_DIR, defaultStoragePath) ?: defaultStoragePath
+    }
+
+    @Synchronized
+    fun setGithubCredentials(token: String, user: String) {
+        _githubToken.value = token
+        _githubUser.value = user
+        prefs.edit()
+            .putString(KEY_GITHUB_TOKEN, token)
+            .putString(KEY_GITHUB_USER, user)
+            .apply()
+    }
+
+    @Synchronized
+    fun setDefaultBaseDir(path: String) {
+        val cleanPath = path.trim().trimEnd('/', '\\')
+        _defaultBaseDir.value = cleanPath
+        prefs.edit().putString(KEY_BASE_DIR, cleanPath).apply()
     }
 
     @Synchronized
@@ -133,6 +167,9 @@ class RepositoryStore(private val context: Context) {
     companion object {
         private const val KEY_REPOSITORIES = "repositories"
         private const val KEY_SSH_KEYS = "ssh_keys"
+        private const val KEY_GITHUB_TOKEN = "global_github_token"
+        private const val KEY_GITHUB_USER = "global_github_user"
+        private const val KEY_BASE_DIR = "default_base_dir"
 
         @Volatile
         private var INSTANCE: RepositoryStore? = null
