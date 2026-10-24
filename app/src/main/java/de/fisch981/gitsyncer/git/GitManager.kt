@@ -1,0 +1,377 @@
+package de.fisch981.gitsyncer.git
+
+import android.content.Context
+import com.jcraft.jsch.JSch
+import com.jcraft.jsch.Session
+import de.fisch981.gitsyncer.data.RepositoryStore
+import de.fisch981.gitsyncer.model.*
+import org.eclipse.jgit.api.Git
+import org.eclipse.jgit.api.ListBranchCommand
+import org.eclipse.jgit.api.MergeResult
+import org.eclipse.jgit.api.ResetCommand
+import org.eclipse.jgit.api.TransportConfigCallback
+import org.eclipse.jgit.api.errors.GitAPIException
+import org.eclipse.jgit.diff.DiffFormatter
+import org.eclipse.jgit.lib.Constants
+import org.eclipse.jgit.lib.PersonIdent
+import org.eclipse.jgit.lib.ProgressMonitor
+import org.eclipse.jgit.storage.file.FileRepositoryBuilder
+import org.eclipse.jgit.transport.*
+import org.eclipse.jgit.util.FS
+import java.io.ByteArrayOutputStream
+import java.io.File
+import java.text.SimpleDateFormat
+import java.util.*
+
+class GitManager(private val context: Context) {
+
+    private val repoStore = RepositoryStore.getInstance(context)
+
+    fun isGitRepo(localPath: String): Boolean {
+        val dir = File(localPath)
+        val gitDir = File(dir, ".git")
+        return gitDir.exists() && gitDir.isDirectory
+    }
+
+    private fun getCredentialsProvider(config: GitRepositoryConfig): CredentialsProvider? {
+        return when (config.authType) {
+            AuthType.HTTPS_TOKEN -> {
+                val token = config.tokenOrPassword.trim()
+                if (token.isNotEmpty()) {
+                    val user = if (config.username.isNotBlank()) config.username.trim() else "token"
+                    UsernamePasswordCredentialsProvider(user, token)
+                } else null
+            }
+            AuthType.HTTPS_CREDENTIALS -> {
+                UsernamePasswordCredentialsProvider(config.username.trim(), config.tokenOrPassword)
+            }
+            AuthType.SSH_KEY -> null
+        }
+    }
+
+    private fun getTransportConfigCallback(config: GitRepositoryConfig): TransportConfigCallback {
+        return TransportConfigCallback { transport ->
+            if (transport is SshTransport && config.authType == AuthType.SSH_KEY) {
+                val sshKey = repoStore.getSshKey(config.sshKeyId)
+                val sessionFactory = object : org.eclipse.jgit.transport.ssh.jsch.JschConfigSessionFactory() {
+                    override fun configure(hc: org.eclipse.jgit.transport.ssh.jsch.OpenSshConfig.Host?, session: Session?) {
+                        session?.setConfig("StrictHostKeyChecking", "no")
+                    }
+
+                    override fun createDefaultJSch(fs: FS?): JSch {
+                        val jsch = super.createDefaultJSch(fs)
+                        if (sshKey != null && sshKey.privateKey.isNotBlank()) {
+                            try {
+                                val privKeyBytes = sshKey.privateKey.toByteArray(Charsets.UTF_8)
+                                val pubKeyBytes = sshKey.publicKey.toByteArray(Charsets.UTF_8)
+                                jsch.addIdentity("gitsyncer_key", privKeyBytes, pubKeyBytes, null)
+                            } catch (e: Exception) {
+                                e.printStackTrace()
+                            }
+                        }
+                        return jsch
+                    }
+                }
+                transport.sshSessionFactory = sessionFactory
+            }
+        }
+    }
+
+    fun cloneRepository(
+        config: GitRepositoryConfig,
+        progressListener: ((String, Int) -> Unit)? = null
+    ): SyncResult {
+        val targetDir = File(config.localPath)
+        if (!targetDir.exists()) {
+            targetDir.mkdirs()
+        }
+
+        val monitor = object : ProgressMonitor {
+            private var totalTasks = 0
+            private var currentWork = 0
+            private var totalWork = 0
+
+            override fun start(totalTasks: Int) {
+                this.totalTasks = totalTasks
+            }
+
+            override fun beginTask(title: String?, totalWork: Int) {
+                this.totalWork = totalWork
+                this.currentWork = 0
+                progressListener?.invoke(title ?: "Cloning...", 0)
+            }
+
+            override fun update(completed: Int) {
+                currentWork += completed
+                val pct = if (totalWork > 0) (currentWork * 100) / totalWork else 0
+                progressListener?.invoke("Downloading: $pct%", pct)
+            }
+
+            override fun endTask() {}
+            override fun isCancelled(): Boolean = false
+            override fun showDuration(enabled: Boolean) {}
+        }
+
+        return try {
+            val cloneCommand = Git.cloneRepository()
+                .setURI(config.remoteUrl)
+                .setDirectory(targetDir)
+                .setBranch(config.branch.ifBlank { "main" })
+                .setProgressMonitor(monitor)
+
+            getCredentialsProvider(config)?.let { cloneCommand.setCredentialsProvider(it) }
+            cloneCommand.setTransportConfigCallback(getTransportConfigCallback(config))
+
+            val git = cloneCommand.call()
+            git.close()
+            SyncResult(success = true, message = "Clone completed successfully")
+        } catch (e: Exception) {
+            SyncResult(success = false, message = "Clone failed: ${e.localizedMessage}")
+        }
+    }
+
+    fun sync(
+        config: GitRepositoryConfig,
+        progressListener: ((String, Int) -> Unit)? = null
+    ): SyncResult {
+        val targetDir = File(config.localPath)
+        if (!isGitRepo(config.localPath)) {
+            // Need initial clone
+            progressListener?.invoke("Initial clone starting...", 10)
+            val cloneRes = cloneRepository(config, progressListener)
+            if (!cloneRes.success) return cloneRes
+        }
+
+        return try {
+            val repoBuilder = FileRepositoryBuilder()
+            val repository = repoBuilder.setGitDir(File(targetDir, ".git"))
+                .readEnvironment()
+                .findGitDir()
+                .build()
+
+            val git = Git(repository)
+            val creds = getCredentialsProvider(config)
+            val transportCallback = getTransportConfigCallback(config)
+
+            progressListener?.invoke("Checking local status...", 20)
+            val status = git.status().call()
+
+            var commitsPushed = 0
+            var commitsPulled = 0
+
+            // 1. If not PULL_ONLY, stage local changes and commit
+            if (config.syncDirection != SyncDirection.PULL_ONLY) {
+                val hasChanges = status.hasUncommittedChanges() || status.untracked.isNotEmpty()
+                if (hasChanges) {
+                    progressListener?.invoke("Staging local changes...", 35)
+                    git.add().addFilepattern(".").call()
+                    // Stage deletions
+                    if (status.missing.isNotEmpty() || status.removed.isNotEmpty()) {
+                        val rm = git.rm()
+                        status.missing.forEach { rm.addFilepattern(it) }
+                        status.removed.forEach { rm.addFilepattern(it) }
+                        rm.call()
+                    }
+
+                    val dateStr = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date())
+                    val msg = config.autoCommitMessage.replace("%timestamp%", dateStr)
+                    val author = PersonIdent(config.authorName, config.authorEmail)
+
+                    progressListener?.invoke("Committing local changes...", 50)
+                    git.commit()
+                        .setMessage(msg)
+                        .setAuthor(author)
+                        .setCommitter(author)
+                        .call()
+                }
+            }
+
+            // 2. Fetch and Pull from remote
+            if (config.syncDirection != SyncDirection.PUSH_ONLY) {
+                progressListener?.invoke("Pulling from remote...", 65)
+                val pullCmd = git.pull()
+                creds?.let { pullCmd.setCredentialsProvider(it) }
+                pullCmd.setTransportConfigCallback(transportCallback)
+
+                val pullResult = pullCmd.call()
+                if (!pullResult.isSuccessful) {
+                    val mergeResult = pullResult.mergeResult
+                    if (mergeResult != null && mergeResult.mergeStatus == MergeResult.MergeStatus.CONFLICTING) {
+                        val conflicts = mergeResult.conflicts?.keys?.toList() ?: emptyList()
+                        git.close()
+                        return SyncResult(
+                            success = false,
+                            message = "Merge conflicts encountered in ${conflicts.size} file(s)",
+                            conflicts = conflicts
+                        )
+                    }
+                }
+                commitsPulled = 1
+            }
+
+            // 3. Push to remote
+            if (config.syncDirection != SyncDirection.PULL_ONLY) {
+                progressListener?.invoke("Pushing commits to remote...", 85)
+                val pushCmd = git.push()
+                creds?.let { pushCmd.setCredentialsProvider(it) }
+                pushCmd.setTransportConfigCallback(transportCallback)
+                val pushResults = pushCmd.call()
+                for (pushRes in pushResults) {
+                    for (update in pushRes.remoteUpdates) {
+                        if (update.status == RemoteRefUpdate.Status.OK || update.status == RemoteRefUpdate.Status.UP_TO_DATE) {
+                            commitsPushed++
+                        } else if (update.status == RemoteRefUpdate.Status.REJECTED_NONFASTFORWARD) {
+                            git.close()
+                            return SyncResult(
+                                success = false,
+                                message = "Push rejected: Remote has newer changes. Please pull first."
+                            )
+                        }
+                    }
+                }
+            }
+
+            git.close()
+            progressListener?.invoke("Sync complete!", 100)
+            SyncResult(
+                success = true,
+                message = "Synchronized successfully",
+                commitsPulled = commitsPulled,
+                commitsPushed = commitsPushed
+            )
+        } catch (e: Exception) {
+            SyncResult(success = false, message = "Sync error: ${e.localizedMessage ?: e.javaClass.simpleName}")
+        }
+    }
+
+    fun getStatus(config: GitRepositoryConfig): List<FileChange> {
+        val targetDir = File(config.localPath)
+        if (!isGitRepo(config.localPath)) return emptyList()
+
+        return try {
+            val repository = FileRepositoryBuilder()
+                .setGitDir(File(targetDir, ".git"))
+                .build()
+            val git = Git(repository)
+            val status = git.status().call()
+            val changes = mutableListOf<FileChange>()
+
+            status.conflicting.forEach { changes.add(FileChange(it, ChangeType.CONFLICT)) }
+            status.modified.forEach { changes.add(FileChange(it, ChangeType.MODIFIED)) }
+            status.added.forEach { changes.add(FileChange(it, ChangeType.ADDED)) }
+            status.untracked.forEach { changes.add(FileChange(it, ChangeType.UNTRACKED)) }
+            status.removed.forEach { changes.add(FileChange(it, ChangeType.DELETED)) }
+            status.missing.forEach { changes.add(FileChange(it, ChangeType.DELETED)) }
+
+            git.close()
+            changes
+        } catch (e: Exception) {
+            emptyList()
+        }
+    }
+
+    fun getLog(config: GitRepositoryConfig, maxCount: Int = 30): List<CommitInfo> {
+        val targetDir = File(config.localPath)
+        if (!isGitRepo(config.localPath)) return emptyList()
+
+        return try {
+            val repository = FileRepositoryBuilder()
+                .setGitDir(File(targetDir, ".git"))
+                .build()
+            val git = Git(repository)
+            val commits = git.log().setMaxCount(maxCount).call()
+            val list = mutableListOf<CommitInfo>()
+            for (commit in commits) {
+                list.add(
+                    CommitInfo(
+                        id = commit.name,
+                        shortId = commit.name.take(7),
+                        author = commit.authorIdent.name ?: "Unknown",
+                        email = commit.authorIdent.emailAddress ?: "",
+                        message = commit.shortMessage ?: "",
+                        timestamp = commit.commitTime * 1000L
+                    )
+                )
+            }
+            git.close()
+            list
+        } catch (e: Exception) {
+            emptyList()
+        }
+    }
+
+    fun getDiff(config: GitRepositoryConfig, filePath: String): String {
+        val targetDir = File(config.localPath)
+        if (!isGitRepo(config.localPath)) return "Not a git repository"
+
+        return try {
+            val repository = FileRepositoryBuilder()
+                .setGitDir(File(targetDir, ".git"))
+                .build()
+            val git = Git(repository)
+            val out = ByteArrayOutputStream()
+            val formatter = DiffFormatter(out)
+            formatter.setRepository(repository)
+
+            val diffs = git.diff()
+                .setPathFilter(org.eclipse.jgit.treewalk.filter.PathFilter.create(filePath))
+                .call()
+
+            for (entry in diffs) {
+                formatter.format(entry)
+            }
+            formatter.flush()
+            git.close()
+            out.toString("UTF-8").ifBlank { "No changes in $filePath" }
+        } catch (e: Exception) {
+            "Error loading diff: ${e.localizedMessage}"
+        }
+    }
+
+    fun resolveConflict(config: GitRepositoryConfig, filePath: String, useLocal: Boolean): Boolean {
+        val targetDir = File(config.localPath)
+        if (!isGitRepo(config.localPath)) return false
+
+        return try {
+            val repository = FileRepositoryBuilder()
+                .setGitDir(File(targetDir, ".git"))
+                .build()
+            val git = Git(repository)
+
+            // Checkout ours or theirs
+            git.checkout()
+                .setStage(if (useLocal) org.eclipse.jgit.api.CheckoutCommand.Stage.OURS else org.eclipse.jgit.api.CheckoutCommand.Stage.THEIRS)
+                .addPath(filePath)
+                .call()
+
+            // Stage resolution
+            git.add().addFilepattern(filePath).call()
+            git.close()
+            true
+        } catch (e: Exception) {
+            e.printStackTrace()
+            false
+        }
+    }
+
+    fun discardChanges(config: GitRepositoryConfig, filePath: String): Boolean {
+        val targetDir = File(config.localPath)
+        if (!isGitRepo(config.localPath)) return false
+
+        return try {
+            val repository = FileRepositoryBuilder()
+                .setGitDir(File(targetDir, ".git"))
+                .build()
+            val git = Git(repository)
+
+            val file = File(targetDir, filePath)
+            if (file.exists()) {
+                git.checkout().addPath(filePath).call()
+            }
+            git.close()
+            true
+        } catch (e: Exception) {
+            false
+        }
+    }
+}
