@@ -85,6 +85,7 @@ fun EditRepoScreen(
     }
     var selectedSshKeyId by remember { mutableStateOf(existingRepo?.sshKeyId ?: sshKeys.firstOrNull()?.id) }
     var autoSyncEnabled by remember { mutableStateOf(existingRepo?.autoSyncEnabled ?: true) }
+    var shallowClone by remember { mutableStateOf(existingRepo?.shallowClone ?: true) }
     var syncIntervalMinutes by remember { mutableStateOf(existingRepo?.syncIntervalMinutes ?: 60) }
     var syncDirection by remember { mutableStateOf(existingRepo?.syncDirection ?: SyncDirection.TWO_WAY) }
     var autoCommitMessage by remember { mutableStateOf(existingRepo?.autoCommitMessage ?: "Sync %timestamp%") }
@@ -448,6 +449,25 @@ fun EditRepoScreen(
                         )
                     }
 
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Shallow-Clone (Tiefe 1)", fontWeight = FontWeight.SemiBold)
+                            Text(
+                                "Empfohlen: Lädt nur den aktuellen Stand herunter. Verhindert Speicherprobleme und Hänger bei großen Repositories mit Binärdateien/APKs (wie FolderGallery).",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = shallowClone,
+                            onCheckedChange = { shallowClone = it }
+                        )
+                    }
+
                     if (autoSyncEnabled) {
                         Text("Sync-Intervall:", style = MaterialTheme.typography.labelMedium)
                         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -544,6 +564,7 @@ fun EditRepoScreen(
                         username = username.trim(),
                         sshKeyId = selectedSshKeyId,
                         autoSyncEnabled = autoSyncEnabled,
+                        shallowClone = shallowClone,
                         syncIntervalMinutes = syncIntervalMinutes,
                         syncDirection = syncDirection,
                         autoCommitMessage = autoCommitMessage.trim(),
@@ -602,6 +623,7 @@ fun EditRepoScreen(
                         username = username.trim(),
                         sshKeyId = selectedSshKeyId,
                         autoSyncEnabled = autoSyncEnabled,
+                        shallowClone = shallowClone,
                         syncIntervalMinutes = syncIntervalMinutes,
                         syncDirection = syncDirection,
                         autoCommitMessage = autoCommitMessage.trim(),

@@ -6,6 +6,11 @@ und dieses Projekt hält sich an [Semantic Versioning](https://semver.org/lang/d
 
 ---
 
+## [1.1.1] - 2026-10-24
+
+### Geändert / Hinzugefügt
+- JGit Android-Speicheroptimierung (LargeHeap, WindowCacheConfig, mmap=false) und Shallow-Clone zur Vermeidung von Haengern bei grossen Repositories wie FolderGallery
+
 ## [1.1.0] - 2026-10-24
 
 ### Geändert / Hinzugefügt

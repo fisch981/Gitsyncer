@@ -113,11 +113,19 @@ class GitManager(private val context: Context) {
         }
 
         return try {
+            val targetBranch = config.branch.ifBlank { "main" }
             val cloneCommand = Git.cloneRepository()
                 .setURI(config.remoteUrl)
                 .setDirectory(targetDir)
-                .setBranch(config.branch.ifBlank { "main" })
+                .setBranch(targetBranch)
+                .setCloneAllBranches(false)
+                .setBranchesToClone(listOf("refs/heads/$targetBranch"))
+                .setTimeout(300)
                 .setProgressMonitor(monitor)
+
+            if (config.shallowClone) {
+                cloneCommand.setDepth(1)
+            }
 
             getCredentialsProvider(config)?.let { cloneCommand.setCredentialsProvider(it) }
             cloneCommand.setTransportConfigCallback(getTransportConfigCallback(config))
@@ -125,8 +133,10 @@ class GitManager(private val context: Context) {
             val git = cloneCommand.call()
             git.close()
             SyncResult(success = true, message = "Clone completed successfully")
-        } catch (e: Exception) {
-            SyncResult(success = false, message = "Clone failed: ${e.localizedMessage}")
+        } catch (e: OutOfMemoryError) {
+            SyncResult(success = false, message = "Speichermangel (OOM): Repository enthält große Dateien/Verlauf. Bitte Shallow-Clone aktivieren.")
+        } catch (e: Throwable) {
+            SyncResult(success = false, message = "Clone failed: ${e.localizedMessage ?: e.javaClass.simpleName}")
         }
     }
 
@@ -190,6 +200,7 @@ class GitManager(private val context: Context) {
             if (config.syncDirection != SyncDirection.PUSH_ONLY) {
                 progressListener?.invoke("Pulling from remote...", 65)
                 val pullCmd = git.pull()
+                    .setTimeout(300)
                 creds?.let { pullCmd.setCredentialsProvider(it) }
                 pullCmd.setTransportConfigCallback(transportCallback)
 
@@ -213,6 +224,7 @@ class GitManager(private val context: Context) {
             if (config.syncDirection != SyncDirection.PULL_ONLY) {
                 progressListener?.invoke("Pushing commits to remote...", 85)
                 val pushCmd = git.push()
+                    .setTimeout(300)
                 creds?.let { pushCmd.setCredentialsProvider(it) }
                 pushCmd.setTransportConfigCallback(transportCallback)
                 val pushResults = pushCmd.call()
@@ -239,7 +251,9 @@ class GitManager(private val context: Context) {
                 commitsPulled = commitsPulled,
                 commitsPushed = commitsPushed
             )
-        } catch (e: Exception) {
+        } catch (e: OutOfMemoryError) {
+            SyncResult(success = false, message = "Speichermangel (OOM): Repository enthält zu große Dateien.")
+        } catch (e: Throwable) {
             SyncResult(success = false, message = "Sync error: ${e.localizedMessage ?: e.javaClass.simpleName}")
         }
     }
