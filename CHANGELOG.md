@@ -6,6 +6,11 @@ und dieses Projekt hält sich an [Semantic Versioning](https://semver.org/lang/d
 
 ---
 
+## [1.1.2] - 2026-10-24
+
+### Geändert / Hinzugefügt
+- Branch-Zuordnung korrigiert (expliziter targetBranch Pull/Push ohne Master-Fallback), Selbstreparatur bei verwaisten Klon-Resten und Reset-Funktion
+
 ## [1.1.1] - 2026-10-24
 
 ### Geändert / Hinzugefügt

@@ -30,7 +30,10 @@ class GitManager(private val context: Context) {
     fun isGitRepo(localPath: String): Boolean {
         val dir = File(localPath)
         val gitDir = File(dir, ".git")
-        return gitDir.exists() && gitDir.isDirectory
+        if (!gitDir.exists() || !gitDir.isDirectory) return false
+        val headFile = File(gitDir, "HEAD")
+        val configFile = File(gitDir, "config")
+        return headFile.exists() && headFile.length() > 0 && configFile.exists()
     }
 
     private fun getCredentialsProvider(config: GitRepositoryConfig): CredentialsProvider? {
@@ -118,8 +121,6 @@ class GitManager(private val context: Context) {
                 .setURI(config.remoteUrl)
                 .setDirectory(targetDir)
                 .setBranch(targetBranch)
-                .setCloneAllBranches(false)
-                .setBranchesToClone(listOf("refs/heads/$targetBranch"))
                 .setTimeout(300)
                 .setProgressMonitor(monitor)
 
@@ -138,6 +139,18 @@ class GitManager(private val context: Context) {
         } catch (e: Throwable) {
             SyncResult(success = false, message = "Clone failed: ${e.localizedMessage ?: e.javaClass.simpleName}")
         }
+    }
+
+    fun recloneRepository(
+        config: GitRepositoryConfig,
+        progressListener: ((String, Int) -> Unit)? = null
+    ): SyncResult {
+        val targetDir = File(config.localPath)
+        val gitDir = File(targetDir, ".git")
+        if (gitDir.exists()) {
+            gitDir.deleteRecursively()
+        }
+        return cloneRepository(config, progressListener)
     }
 
     fun sync(
@@ -162,6 +175,42 @@ class GitManager(private val context: Context) {
             val git = Git(repository)
             val creds = getCredentialsProvider(config)
             val transportCallback = getTransportConfigCallback(config)
+            val targetBranch = config.branch.ifBlank { "main" }
+
+            // Ensure local branch matches targetBranch
+            try {
+                val currentBranch = repository.branch
+                if (currentBranch != targetBranch) {
+                    val branchRef = repository.findRef("refs/heads/$targetBranch")
+                    if (branchRef != null) {
+                        git.checkout().setName(targetBranch).call()
+                    } else if (repository.findRef("refs/remotes/origin/$targetBranch") != null) {
+                        git.checkout()
+                            .setCreateBranch(true)
+                            .setName(targetBranch)
+                            .setUpstreamMode(org.eclipse.jgit.api.CreateBranchCommand.SetupUpstreamMode.TRACK)
+                            .setStartPoint("origin/$targetBranch")
+                            .call()
+                    } else if (currentBranch == "master" && targetBranch != "master") {
+                        git.branchRename().setOldName("master").setNewName(targetBranch).call()
+                    }
+                }
+            } catch (e: Throwable) {
+                e.printStackTrace()
+            }
+
+            // Ensure tracking configuration is properly set in git config
+            try {
+                val gitConfig = repository.config
+                val currentRemote = gitConfig.getString("branch", targetBranch, "remote")
+                if (currentRemote.isNullOrBlank()) {
+                    gitConfig.setString("branch", targetBranch, "remote", "origin")
+                    gitConfig.setString("branch", targetBranch, "merge", "refs/heads/$targetBranch")
+                    gitConfig.save()
+                }
+            } catch (e: Throwable) {
+                e.printStackTrace()
+            }
 
             progressListener?.invoke("Checking local status...", 20)
             val status = git.status().call()
@@ -200,6 +249,8 @@ class GitManager(private val context: Context) {
             if (config.syncDirection != SyncDirection.PUSH_ONLY) {
                 progressListener?.invoke("Pulling from remote...", 65)
                 val pullCmd = git.pull()
+                    .setRemote("origin")
+                    .setRemoteBranchName(targetBranch)
                     .setTimeout(300)
                 creds?.let { pullCmd.setCredentialsProvider(it) }
                 pullCmd.setTransportConfigCallback(transportCallback)
@@ -224,6 +275,8 @@ class GitManager(private val context: Context) {
             if (config.syncDirection != SyncDirection.PULL_ONLY) {
                 progressListener?.invoke("Pushing commits to remote...", 85)
                 val pushCmd = git.push()
+                    .setRemote("origin")
+                    .setRefSpecs(RefSpec("refs/heads/$targetBranch:refs/heads/$targetBranch"))
                     .setTimeout(300)
                 creds?.let { pushCmd.setCredentialsProvider(it) }
                 pushCmd.setTransportConfigCallback(transportCallback)
@@ -251,6 +304,15 @@ class GitManager(private val context: Context) {
                 commitsPulled = commitsPulled,
                 commitsPushed = commitsPushed
             )
+        } catch (e: org.eclipse.jgit.api.errors.RefNotAdvertisedException) {
+            // Self-repair: If remote rejected due to wrong ref (like master), perform clean reclone
+            progressListener?.invoke("Bereinige lokale Branch-Referenz und klone neu...", 10)
+            val recloneRes = recloneRepository(config, progressListener)
+            if (recloneRes.success) {
+                SyncResult(success = true, message = "Automatische Reparatur & Synchronisation erfolgreich")
+            } else {
+                SyncResult(success = false, message = "Branch-Fehler: ${e.localizedMessage}")
+            }
         } catch (e: OutOfMemoryError) {
             SyncResult(success = false, message = "Speichermangel (OOM): Repository enthält zu große Dateien.")
         } catch (e: Throwable) {

@@ -395,6 +395,32 @@ fun RepoDetailScreen(
                             Spacer(modifier = Modifier.width(8.dp))
                             Text("Repository Konfiguration bearbeiten")
                         }
+
+                        OutlinedButton(
+                            onClick = {
+                                coroutineScope.launch {
+                                    isLoading = true
+                                    val res = withContext(Dispatchers.IO) {
+                                        gitManager.recloneRepository(repo)
+                                    }
+                                    isLoading = false
+                                    if (res.success) {
+                                        repoStore.updateRepoSyncStatus(repo.id, "SUCCESS")
+                                        Toast.makeText(context, "Erfolgreich sauber neu geklont!", Toast.LENGTH_SHORT).show()
+                                    } else {
+                                        repoStore.updateRepoSyncStatus(repo.id, "FAILED", res.message)
+                                        Toast.makeText(context, "Fehler: ${res.message}", Toast.LENGTH_LONG).show()
+                                    }
+                                    refreshData()
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error)
+                        ) {
+                            Icon(Icons.Default.Refresh, contentDescription = null)
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Repository sauber neu klonen (Reset)")
+                        }
                     }
                 }
             }
