@@ -10,14 +10,17 @@ class GitSyncerApp : Application() {
     override fun onCreate() {
         super.onCreate()
 
-        // JGit Optimierung für Android (verhindert OOM und Map failed bei großen Repos wie FolderGallery)
+        // JGit Optimierung für Android:
+        // isPackedGitUseStrongRefs = true verhindert GC-Finalisierung von Inflaters während des Entpackens ("Inflater has been closed")
         try {
             val windowCacheConfig = WindowCacheConfig().apply {
                 isPackedGitMMAP = false
-                packedGitWindowSize = 8 * 1024
-                packedGitLimit = 32 * 1024 * 1024L
-                deltaBaseCacheLimit = 8 * 1024 * 1024
-                streamFileThreshold = 4 * 1024 * 1024 // Streaming ab 4 MB für große Binärdateien/APKs
+                isPackedGitUseStrongRefs = true // Verhindert "Inflater has been closed"
+                isPackedIndexGitUseStrongRefs = true
+                packedGitWindowSize = 8192
+                packedGitLimit = 64 * 1024 * 1024L // 64 MB
+                deltaBaseCacheLimit = 16 * 1024 * 1024 // 16 MB
+                streamFileThreshold = 5 * 1024 * 1024 // 5 MB
             }
             windowCacheConfig.install()
         } catch (e: Throwable) {

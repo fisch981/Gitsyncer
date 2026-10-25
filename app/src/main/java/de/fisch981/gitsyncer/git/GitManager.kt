@@ -12,20 +12,57 @@ import org.eclipse.jgit.api.ResetCommand
 import org.eclipse.jgit.api.TransportConfigCallback
 import org.eclipse.jgit.api.errors.GitAPIException
 import org.eclipse.jgit.diff.DiffFormatter
-import org.eclipse.jgit.lib.Constants
-import org.eclipse.jgit.lib.PersonIdent
-import org.eclipse.jgit.lib.ProgressMonitor
+import org.eclipse.jgit.lib.*
 import org.eclipse.jgit.storage.file.FileRepositoryBuilder
+import org.eclipse.jgit.storage.file.WindowCacheConfig
 import org.eclipse.jgit.transport.*
 import org.eclipse.jgit.util.FS
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.*
+import java.util.concurrent.ConcurrentHashMap
 
 class GitManager(private val context: Context) {
 
     private val repoStore = RepositoryStore.getInstance(context)
+
+    companion object {
+        private val repoLocks = ConcurrentHashMap<String, Any>()
+
+        fun cleanupStaleLocks(localPath: String) {
+            try {
+                val gitDir = File(localPath, ".git")
+                if (!gitDir.exists()) return
+                File(gitDir, "index.lock").takeIf { it.exists() }?.delete()
+                File(gitDir, "HEAD.lock").takeIf { it.exists() }?.delete()
+                File(gitDir, "config.lock").takeIf { it.exists() }?.delete()
+                val refsDir = File(gitDir, "refs")
+                if (refsDir.exists()) {
+                    refsDir.walkTopDown().filter { it.name.endsWith(".lock") }.forEach { it.delete() }
+                }
+            } catch (e: Throwable) {
+                e.printStackTrace()
+            }
+        }
+
+        fun resetJGitInflaterCache() {
+            try {
+                val windowCacheConfig = WindowCacheConfig().apply {
+                    isPackedGitMMAP = false
+                    isPackedGitUseStrongRefs = true
+                    isPackedIndexGitUseStrongRefs = true
+                    packedGitWindowSize = 8192
+                    packedGitLimit = 64 * 1024 * 1024L
+                    deltaBaseCacheLimit = 16 * 1024 * 1024
+                    streamFileThreshold = 5 * 1024 * 1024
+                }
+                windowCacheConfig.install()
+            } catch (e: Throwable) {
+                e.printStackTrace()
+            }
+        }
+    }
 
     fun isGitRepo(localPath: String): Boolean {
         val dir = File(localPath)
@@ -84,60 +121,65 @@ class GitManager(private val context: Context) {
         config: GitRepositoryConfig,
         progressListener: ((String, Int) -> Unit)? = null
     ): SyncResult {
-        val targetDir = File(config.localPath)
-        if (!targetDir.exists()) {
-            targetDir.mkdirs()
-        }
-
-        val monitor = object : ProgressMonitor {
-            private var totalTasks = 0
-            private var currentWork = 0
-            private var totalWork = 0
-
-            override fun start(totalTasks: Int) {
-                this.totalTasks = totalTasks
+        val lock = repoLocks.computeIfAbsent(config.id) { Any() }
+        synchronized(lock) {
+            val targetDir = File(config.localPath)
+            if (!targetDir.exists()) {
+                targetDir.mkdirs()
             }
 
-            override fun beginTask(title: String?, totalWork: Int) {
-                this.totalWork = totalWork
-                this.currentWork = 0
-                progressListener?.invoke(title ?: "Cloning...", 0)
+            cleanupStaleLocks(config.localPath)
+
+            val monitor = object : ProgressMonitor {
+                private var totalTasks = 0
+                private var currentWork = 0
+                private var totalWork = 0
+
+                override fun start(totalTasks: Int) {
+                    this.totalTasks = totalTasks
+                }
+
+                override fun beginTask(title: String?, totalWork: Int) {
+                    this.totalWork = totalWork
+                    this.currentWork = 0
+                    progressListener?.invoke(title ?: "Cloning...", 0)
+                }
+
+                override fun update(completed: Int) {
+                    currentWork += completed
+                    val pct = if (totalWork > 0) (currentWork * 100) / totalWork else 0
+                    progressListener?.invoke("Downloading: $pct%", pct)
+                }
+
+                override fun endTask() {}
+                override fun isCancelled(): Boolean = false
+                override fun showDuration(enabled: Boolean) {}
             }
 
-            override fun update(completed: Int) {
-                currentWork += completed
-                val pct = if (totalWork > 0) (currentWork * 100) / totalWork else 0
-                progressListener?.invoke("Downloading: $pct%", pct)
+            return try {
+                val targetBranch = config.branch.ifBlank { "main" }
+                val cloneCommand = Git.cloneRepository()
+                    .setURI(config.remoteUrl)
+                    .setDirectory(targetDir)
+                    .setBranch(targetBranch)
+                    .setTimeout(300)
+                    .setProgressMonitor(monitor)
+
+                if (config.shallowClone) {
+                    cloneCommand.setDepth(1)
+                }
+
+                getCredentialsProvider(config)?.let { cloneCommand.setCredentialsProvider(it) }
+                cloneCommand.setTransportConfigCallback(getTransportConfigCallback(config))
+
+                val git = cloneCommand.call()
+                git.close()
+                SyncResult(success = true, message = "Clone completed successfully")
+            } catch (e: OutOfMemoryError) {
+                SyncResult(success = false, message = "Speichermangel (OOM): Repository enthält große Dateien/Verlauf. Bitte Shallow-Clone aktivieren.")
+            } catch (e: Throwable) {
+                SyncResult(success = false, message = "Clone failed: ${e.localizedMessage ?: e.javaClass.simpleName}")
             }
-
-            override fun endTask() {}
-            override fun isCancelled(): Boolean = false
-            override fun showDuration(enabled: Boolean) {}
-        }
-
-        return try {
-            val targetBranch = config.branch.ifBlank { "main" }
-            val cloneCommand = Git.cloneRepository()
-                .setURI(config.remoteUrl)
-                .setDirectory(targetDir)
-                .setBranch(targetBranch)
-                .setTimeout(300)
-                .setProgressMonitor(monitor)
-
-            if (config.shallowClone) {
-                cloneCommand.setDepth(1)
-            }
-
-            getCredentialsProvider(config)?.let { cloneCommand.setCredentialsProvider(it) }
-            cloneCommand.setTransportConfigCallback(getTransportConfigCallback(config))
-
-            val git = cloneCommand.call()
-            git.close()
-            SyncResult(success = true, message = "Clone completed successfully")
-        } catch (e: OutOfMemoryError) {
-            SyncResult(success = false, message = "Speichermangel (OOM): Repository enthält große Dateien/Verlauf. Bitte Shallow-Clone aktivieren.")
-        } catch (e: Throwable) {
-            SyncResult(success = false, message = "Clone failed: ${e.localizedMessage ?: e.javaClass.simpleName}")
         }
     }
 
@@ -145,15 +187,47 @@ class GitManager(private val context: Context) {
         config: GitRepositoryConfig,
         progressListener: ((String, Int) -> Unit)? = null
     ): SyncResult {
-        val targetDir = File(config.localPath)
-        val gitDir = File(targetDir, ".git")
-        if (gitDir.exists()) {
-            gitDir.deleteRecursively()
+        val lock = repoLocks.computeIfAbsent(config.id) { Any() }
+        synchronized(lock) {
+            val targetDir = File(config.localPath)
+            val gitDir = File(targetDir, ".git")
+            if (gitDir.exists()) {
+                gitDir.deleteRecursively()
+            }
+            return cloneRepository(config, progressListener)
         }
-        return cloneRepository(config, progressListener)
     }
 
     fun sync(
+        config: GitRepositoryConfig,
+        progressListener: ((String, Int) -> Unit)? = null
+    ): SyncResult {
+        val lock = repoLocks.computeIfAbsent(config.id) { Any() }
+        synchronized(lock) {
+            cleanupStaleLocks(config.localPath)
+            var result = performSync(config, progressListener)
+
+            // Auto-recovery if "Inflater has been closed" occurs
+            if (!result.success && result.message.contains("Inflater has been closed", ignoreCase = true)) {
+                progressListener?.invoke("Zlib Inflater-Bereinigung & Selbstreparatur...", 30)
+                resetJGitInflaterCache()
+                cleanupStaleLocks(config.localPath)
+                result = performSync(config, progressListener)
+                if (result.success) {
+                    return SyncResult(
+                        success = true,
+                        message = "Erfolgreich synchronisiert (nach automatischer Cache-Bereinigung)",
+                        commitsPulled = result.commitsPulled,
+                        commitsPushed = result.commitsPushed
+                    )
+                }
+            }
+
+            return result
+        }
+    }
+
+    private fun performSync(
         config: GitRepositoryConfig,
         progressListener: ((String, Int) -> Unit)? = null
     ): SyncResult {
@@ -165,17 +239,30 @@ class GitManager(private val context: Context) {
             if (!cloneRes.success) return cloneRes
         }
 
+        var repository: Repository? = null
+        var git: Git? = null
+
         return try {
             val repoBuilder = FileRepositoryBuilder()
-            val repository = repoBuilder.setGitDir(File(targetDir, ".git"))
+            repository = repoBuilder.setGitDir(File(targetDir, ".git"))
                 .readEnvironment()
                 .findGitDir()
                 .build()
 
-            val git = Git(repository)
+            git = Git(repository)
             val creds = getCredentialsProvider(config)
             val transportCallback = getTransportConfigCallback(config)
             val targetBranch = config.branch.ifBlank { "main" }
+
+            // Clean up any interrupted merge or rebase state
+            val state = repository.repositoryState
+            if (state == RepositoryState.MERGING || state == RepositoryState.MERGING_RESOLVED || state.isRebasing) {
+                try {
+                    git.reset().setMode(ResetCommand.ResetType.HARD).call()
+                } catch (e: Throwable) {
+                    e.printStackTrace()
+                }
+            }
 
             // Ensure local branch matches targetBranch
             try {
@@ -260,7 +347,6 @@ class GitManager(private val context: Context) {
                     val mergeResult = pullResult.mergeResult
                     if (mergeResult != null && mergeResult.mergeStatus == MergeResult.MergeStatus.CONFLICTING) {
                         val conflicts = mergeResult.conflicts?.keys?.toList() ?: emptyList()
-                        git.close()
                         return SyncResult(
                             success = false,
                             message = "Merge conflicts encountered in ${conflicts.size} file(s)",
@@ -286,7 +372,6 @@ class GitManager(private val context: Context) {
                         if (update.status == RemoteRefUpdate.Status.OK || update.status == RemoteRefUpdate.Status.UP_TO_DATE) {
                             commitsPushed++
                         } else if (update.status == RemoteRefUpdate.Status.REJECTED_NONFASTFORWARD) {
-                            git.close()
                             return SyncResult(
                                 success = false,
                                 message = "Push rejected: Remote has newer changes. Please pull first."
@@ -296,7 +381,6 @@ class GitManager(private val context: Context) {
                 }
             }
 
-            git.close()
             progressListener?.invoke("Sync complete!", 100)
             SyncResult(
                 success = true,
@@ -316,138 +400,211 @@ class GitManager(private val context: Context) {
         } catch (e: OutOfMemoryError) {
             SyncResult(success = false, message = "Speichermangel (OOM): Repository enthält zu große Dateien.")
         } catch (e: Throwable) {
-            SyncResult(success = false, message = "Sync error: ${e.localizedMessage ?: e.javaClass.simpleName}")
+            val msg = e.localizedMessage ?: e.javaClass.simpleName
+            SyncResult(success = false, message = "Sync error: $msg")
+        } finally {
+            try {
+                git?.close()
+                repository?.close()
+            } catch (e: Throwable) {
+                e.printStackTrace()
+            }
         }
     }
 
     fun getStatus(config: GitRepositoryConfig): List<FileChange> {
-        val targetDir = File(config.localPath)
-        if (!isGitRepo(config.localPath)) return emptyList()
+        val lock = repoLocks.computeIfAbsent(config.id) { Any() }
+        synchronized(lock) {
+            val targetDir = File(config.localPath)
+            if (!isGitRepo(config.localPath)) return emptyList()
+            cleanupStaleLocks(config.localPath)
 
-        return try {
-            val repository = FileRepositoryBuilder()
-                .setGitDir(File(targetDir, ".git"))
-                .build()
-            val git = Git(repository)
-            val status = git.status().call()
-            val changes = mutableListOf<FileChange>()
+            var repository: Repository? = null
+            var git: Git? = null
 
-            status.conflicting.forEach { changes.add(FileChange(it, ChangeType.CONFLICT)) }
-            status.modified.forEach { changes.add(FileChange(it, ChangeType.MODIFIED)) }
-            status.added.forEach { changes.add(FileChange(it, ChangeType.ADDED)) }
-            status.untracked.forEach { changes.add(FileChange(it, ChangeType.UNTRACKED)) }
-            status.removed.forEach { changes.add(FileChange(it, ChangeType.DELETED)) }
-            status.missing.forEach { changes.add(FileChange(it, ChangeType.DELETED)) }
+            return try {
+                repository = FileRepositoryBuilder()
+                    .setGitDir(File(targetDir, ".git"))
+                    .build()
+                git = Git(repository)
+                val status = git.status().call()
+                val changes = mutableListOf<FileChange>()
 
-            git.close()
-            changes
-        } catch (e: Exception) {
-            emptyList()
+                status.conflicting.forEach { changes.add(FileChange(it, ChangeType.CONFLICT)) }
+                status.modified.forEach { changes.add(FileChange(it, ChangeType.MODIFIED)) }
+                status.added.forEach { changes.add(FileChange(it, ChangeType.ADDED)) }
+                status.untracked.forEach { changes.add(FileChange(it, ChangeType.UNTRACKED)) }
+                status.removed.forEach { changes.add(FileChange(it, ChangeType.DELETED)) }
+                status.missing.forEach { changes.add(FileChange(it, ChangeType.DELETED)) }
+
+                changes
+            } catch (e: Throwable) {
+                emptyList()
+            } finally {
+                try {
+                    git?.close()
+                    repository?.close()
+                } catch (e: Throwable) {
+                    e.printStackTrace()
+                }
+            }
         }
     }
 
     fun getLog(config: GitRepositoryConfig, maxCount: Int = 30): List<CommitInfo> {
-        val targetDir = File(config.localPath)
-        if (!isGitRepo(config.localPath)) return emptyList()
+        val lock = repoLocks.computeIfAbsent(config.id) { Any() }
+        synchronized(lock) {
+            val targetDir = File(config.localPath)
+            if (!isGitRepo(config.localPath)) return emptyList()
+            cleanupStaleLocks(config.localPath)
 
-        return try {
-            val repository = FileRepositoryBuilder()
-                .setGitDir(File(targetDir, ".git"))
-                .build()
-            val git = Git(repository)
-            val commits = git.log().setMaxCount(maxCount).call()
-            val list = mutableListOf<CommitInfo>()
-            for (commit in commits) {
-                list.add(
-                    CommitInfo(
-                        id = commit.name,
-                        shortId = commit.name.take(7),
-                        author = commit.authorIdent.name ?: "Unknown",
-                        email = commit.authorIdent.emailAddress ?: "",
-                        message = commit.shortMessage ?: "",
-                        timestamp = commit.commitTime * 1000L
+            var repository: Repository? = null
+            var git: Git? = null
+
+            return try {
+                repository = FileRepositoryBuilder()
+                    .setGitDir(File(targetDir, ".git"))
+                    .build()
+                git = Git(repository)
+                val commits = git.log().setMaxCount(maxCount).call()
+                val list = mutableListOf<CommitInfo>()
+                for (commit in commits) {
+                    list.add(
+                        CommitInfo(
+                            id = commit.name,
+                            shortId = commit.name.take(7),
+                            author = commit.authorIdent.name ?: "Unknown",
+                            email = commit.authorIdent.emailAddress ?: "",
+                            message = commit.shortMessage ?: "",
+                            timestamp = commit.commitTime * 1000L
+                        )
                     )
-                )
+                }
+                list
+            } catch (e: Throwable) {
+                emptyList()
+            } finally {
+                try {
+                    git?.close()
+                    repository?.close()
+                } catch (e: Throwable) {
+                    e.printStackTrace()
+                }
             }
-            git.close()
-            list
-        } catch (e: Exception) {
-            emptyList()
         }
     }
 
     fun getDiff(config: GitRepositoryConfig, filePath: String): String {
-        val targetDir = File(config.localPath)
-        if (!isGitRepo(config.localPath)) return "Not a git repository"
+        val lock = repoLocks.computeIfAbsent(config.id) { Any() }
+        synchronized(lock) {
+            val targetDir = File(config.localPath)
+            if (!isGitRepo(config.localPath)) return "Not a git repository"
+            cleanupStaleLocks(config.localPath)
 
-        return try {
-            val repository = FileRepositoryBuilder()
-                .setGitDir(File(targetDir, ".git"))
-                .build()
-            val git = Git(repository)
-            val out = ByteArrayOutputStream()
-            val formatter = DiffFormatter(out)
-            formatter.setRepository(repository)
+            var repository: Repository? = null
+            var git: Git? = null
 
-            val diffs = git.diff()
-                .setPathFilter(org.eclipse.jgit.treewalk.filter.PathFilter.create(filePath))
-                .call()
+            return try {
+                repository = FileRepositoryBuilder()
+                    .setGitDir(File(targetDir, ".git"))
+                    .build()
+                git = Git(repository)
+                val out = ByteArrayOutputStream()
+                val formatter = DiffFormatter(out)
+                formatter.setRepository(repository)
 
-            for (entry in diffs) {
-                formatter.format(entry)
+                val diffs = git.diff()
+                    .setPathFilter(org.eclipse.jgit.treewalk.filter.PathFilter.create(filePath))
+                    .call()
+
+                for (entry in diffs) {
+                    formatter.format(entry)
+                }
+                formatter.flush()
+                out.toString("UTF-8").ifBlank { "No changes in $filePath" }
+            } catch (e: Throwable) {
+                "Error loading diff: ${e.localizedMessage}"
+            } finally {
+                try {
+                    git?.close()
+                    repository?.close()
+                } catch (e: Throwable) {
+                    e.printStackTrace()
+                }
             }
-            formatter.flush()
-            git.close()
-            out.toString("UTF-8").ifBlank { "No changes in $filePath" }
-        } catch (e: Exception) {
-            "Error loading diff: ${e.localizedMessage}"
         }
     }
 
     fun resolveConflict(config: GitRepositoryConfig, filePath: String, useLocal: Boolean): Boolean {
-        val targetDir = File(config.localPath)
-        if (!isGitRepo(config.localPath)) return false
+        val lock = repoLocks.computeIfAbsent(config.id) { Any() }
+        synchronized(lock) {
+            val targetDir = File(config.localPath)
+            if (!isGitRepo(config.localPath)) return false
+            cleanupStaleLocks(config.localPath)
 
-        return try {
-            val repository = FileRepositoryBuilder()
-                .setGitDir(File(targetDir, ".git"))
-                .build()
-            val git = Git(repository)
+            var repository: Repository? = null
+            var git: Git? = null
 
-            // Checkout ours or theirs
-            git.checkout()
-                .setStage(if (useLocal) org.eclipse.jgit.api.CheckoutCommand.Stage.OURS else org.eclipse.jgit.api.CheckoutCommand.Stage.THEIRS)
-                .addPath(filePath)
-                .call()
+            return try {
+                repository = FileRepositoryBuilder()
+                    .setGitDir(File(targetDir, ".git"))
+                    .build()
+                git = Git(repository)
 
-            // Stage resolution
-            git.add().addFilepattern(filePath).call()
-            git.close()
-            true
-        } catch (e: Exception) {
-            e.printStackTrace()
-            false
+                // Checkout ours or theirs
+                git.checkout()
+                    .setStage(if (useLocal) org.eclipse.jgit.api.CheckoutCommand.Stage.OURS else org.eclipse.jgit.api.CheckoutCommand.Stage.THEIRS)
+                    .addPath(filePath)
+                    .call()
+
+                // Stage resolution
+                git.add().addFilepattern(filePath).call()
+                true
+            } catch (e: Throwable) {
+                e.printStackTrace()
+                false
+            } finally {
+                try {
+                    git?.close()
+                    repository?.close()
+                } catch (e: Throwable) {
+                    e.printStackTrace()
+                }
+            }
         }
     }
 
     fun discardChanges(config: GitRepositoryConfig, filePath: String): Boolean {
-        val targetDir = File(config.localPath)
-        if (!isGitRepo(config.localPath)) return false
+        val lock = repoLocks.computeIfAbsent(config.id) { Any() }
+        synchronized(lock) {
+            val targetDir = File(config.localPath)
+            if (!isGitRepo(config.localPath)) return false
+            cleanupStaleLocks(config.localPath)
 
-        return try {
-            val repository = FileRepositoryBuilder()
-                .setGitDir(File(targetDir, ".git"))
-                .build()
-            val git = Git(repository)
+            var repository: Repository? = null
+            var git: Git? = null
 
-            val file = File(targetDir, filePath)
-            if (file.exists()) {
-                git.checkout().addPath(filePath).call()
+            return try {
+                repository = FileRepositoryBuilder()
+                    .setGitDir(File(targetDir, ".git"))
+                    .build()
+                git = Git(repository)
+
+                val file = File(targetDir, filePath)
+                if (file.exists()) {
+                    git.checkout().addPath(filePath).call()
+                }
+                true
+            } catch (e: Throwable) {
+                false
+            } finally {
+                try {
+                    git?.close()
+                    repository?.close()
+                } catch (e: Throwable) {
+                    e.printStackTrace()
+                }
             }
-            git.close()
-            true
-        } catch (e: Exception) {
-            false
         }
     }
 }

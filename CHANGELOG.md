@@ -6,6 +6,11 @@ und dieses Projekt hält sich an [Semantic Versioning](https://semver.org/lang/d
 
 ---
 
+## [1.1.3] - 2026-10-25
+
+### Geändert / Hinzugefügt
+- Behebung von 'Inflater has been closed' durch StrongRefs in WindowCache, Thread-Synchronisierung, sauberes Ressourcenmanagement und automatische Cache-Wiederherstellung
+
 ## [1.1.2] - 2026-10-24
 
 ### Geändert / Hinzugefügt
