@@ -377,7 +377,7 @@ fun SettingsScreen(
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Text("Über GitSyncer", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
-                    Text("Version: 1.1.0", style = MaterialTheme.typography.bodySmall)
+                    Text("Version: ${de.fisch981.gitsyncer.BuildConfig.VERSION_NAME} (Build ${de.fisch981.gitsyncer.BuildConfig.VERSION_CODE})", style = MaterialTheme.typography.bodySmall)
                     Text("Paketname: de.fisch981.gitsyncer", style = MaterialTheme.typography.bodySmall)
                     Text("Engine: Eclipse JGit 6.8 & JSch SSH Provider", style = MaterialTheme.typography.bodySmall)
                     Text("Entwickelt für: fisch981", style = MaterialTheme.typography.bodySmall)
