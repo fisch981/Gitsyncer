@@ -8,8 +8,18 @@ und dieses Projekt hält sich an [Semantic Versioning](https://semver.org/lang/d
 
 ## [1.2.0] - 2026-10-27
 
-### Geändert / Hinzugefügt
-- Funktion zum temporaeren Pausieren/Deaktivieren von Repositories hinzugefuegt und Menue-Texte neutralisiert
+### Hinzugefügt
+- **Repositories pausieren / vom Sync ausschließen:**
+  - Neue Option `isEnabled` pro Repository: Erlaubt das temporäre Deaktivieren/Pausieren von Repositories, die gerade nicht aktiv genutzt werden, ohne sie löschen zu müssen.
+  - Ein-/Ausschaltbar direkt über ein Pause/Play-Icon auf den Repository-Karten im Dashboard, in der Detailansicht ("Übersicht") sowie im Bearbeiten-Dialog.
+  - Pausierte Repositories werden automatisch von automatischen periodischen Hintergrund-Syncs (WorkManager), Quick Settings Kacheln und manuellen Sammel-Syncs ("Alle synchronisieren") ausgeschlossen.
+  - Visuelle Kennzeichnung mit dezentem „Pausiert“-Badge und angepasstem Status.
+
+### Geändert
+- **Bereinigung von Menü- und Oberflächemtexten:**
+  - Alle verkaufs- oder marketingartigen Hinweise ("100% Kostenlos", "umsonst", "Vollversion freigeschaltet") in der Benutzeroberfläche wurden entfernt und durch einheitliche, neutrale und professionelle Formulierungen ersetzt.
+
+---
 
 ## [1.1.3] - 2026-10-25
 
