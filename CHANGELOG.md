@@ -6,6 +6,11 @@ und dieses Projekt hält sich an [Semantic Versioning](https://semver.org/lang/d
 
 ---
 
+## [1.2.1] - 2026-10-27
+
+### Geändert / Hinzugefügt
+- Behebung von Checkout-Abbruechen bei grossen Dateien (streamFileThreshold 100MB), Schutz vor ungewollter Loeschung fehlender Dateien und sauberer Hard-Reset
+
 ## [1.2.0] - 2026-10-27
 
 ### Hinzugefügt

@@ -448,6 +448,31 @@ fun RepoDetailScreen(
                                 coroutineScope.launch {
                                     isLoading = true
                                     val res = withContext(Dispatchers.IO) {
+                                        gitManager.restoreMissingFiles(repo)
+                                    }
+                                    isLoading = false
+                                    if (res.success) {
+                                        repoStore.updateRepoSyncStatus(repo.id, "SUCCESS")
+                                        Toast.makeText(context, "Dateien erfolgreich wiederhergestellt!", Toast.LENGTH_SHORT).show()
+                                    } else {
+                                        repoStore.updateRepoSyncStatus(repo.id, "FAILED", res.message)
+                                        Toast.makeText(context, "Fehler: ${res.message}", Toast.LENGTH_LONG).show()
+                                    }
+                                    refreshData()
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(Icons.Default.Download, contentDescription = null)
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Fehlende Dateien wiederherstellen (Hard Reset)")
+                        }
+
+                        OutlinedButton(
+                            onClick = {
+                                coroutineScope.launch {
+                                    isLoading = true
+                                    val res = withContext(Dispatchers.IO) {
                                         gitManager.recloneRepository(repo)
                                     }
                                     isLoading = false

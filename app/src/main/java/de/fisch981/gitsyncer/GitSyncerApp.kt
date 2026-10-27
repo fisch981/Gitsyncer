@@ -18,9 +18,9 @@ class GitSyncerApp : Application() {
                 isPackedGitUseStrongRefs = true // Verhindert "Inflater has been closed"
                 isPackedIndexGitUseStrongRefs = true
                 packedGitWindowSize = 8192
-                packedGitLimit = 64 * 1024 * 1024L // 64 MB
-                deltaBaseCacheLimit = 16 * 1024 * 1024 // 16 MB
-                streamFileThreshold = 5 * 1024 * 1024 // 5 MB
+                packedGitLimit = 128 * 1024 * 1024L // 128 MB
+                deltaBaseCacheLimit = 32 * 1024 * 1024 // 32 MB
+                streamFileThreshold = 100 * 1024 * 1024 // 100 MB: verhindert tmpFile.renameTo() Fehler auf Android FUSE
             }
             windowCacheConfig.install()
         } catch (e: Throwable) {

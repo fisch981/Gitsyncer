@@ -32,6 +32,15 @@ class GitManager(private val context: Context) {
 
         fun cleanupStaleLocks(localPath: String) {
             try {
+                val dir = File(localPath)
+                if (dir.exists()) {
+                    // Clean orphaned temp files left by interrupted checkouts
+                    dir.listFiles()?.forEach { file ->
+                        if (file.name.startsWith("._") && file.name.endsWith(".tmp")) {
+                            file.delete()
+                        }
+                    }
+                }
                 val gitDir = File(localPath, ".git")
                 if (!gitDir.exists()) return
                 File(gitDir, "index.lock").takeIf { it.exists() }?.delete()
@@ -53,9 +62,9 @@ class GitManager(private val context: Context) {
                     isPackedGitUseStrongRefs = true
                     isPackedIndexGitUseStrongRefs = true
                     packedGitWindowSize = 8192
-                    packedGitLimit = 64 * 1024 * 1024L
-                    deltaBaseCacheLimit = 16 * 1024 * 1024
-                    streamFileThreshold = 5 * 1024 * 1024
+                    packedGitLimit = 128 * 1024 * 1024L
+                    deltaBaseCacheLimit = 32 * 1024 * 1024
+                    streamFileThreshold = 100 * 1024 * 1024 // 100 MB: verhindert tmpFile.renameTo() Fehler auf Android FUSE
                 }
                 windowCacheConfig.install()
             } catch (e: Throwable) {
@@ -126,9 +135,15 @@ class GitManager(private val context: Context) {
             val targetDir = File(config.localPath)
             if (!targetDir.exists()) {
                 targetDir.mkdirs()
+            } else {
+                cleanupStaleLocks(config.localPath)
+                // Clean directory if it contains leftovers from a failed previous clone
+                if (targetDir.listFiles()?.isNotEmpty() == true) {
+                    targetDir.listFiles()?.forEach { it.deleteRecursively() }
+                }
             }
 
-            cleanupStaleLocks(config.localPath)
+            resetJGitInflaterCache()
 
             val monitor = object : ProgressMonitor {
                 private var totalTasks = 0
@@ -173,11 +188,20 @@ class GitManager(private val context: Context) {
                 cloneCommand.setTransportConfigCallback(getTransportConfigCallback(config))
 
                 val git = cloneCommand.call()
+                try {
+                    val gitConfig = git.repository.config
+                    gitConfig.setBoolean("core", null, "ignorecase", true)
+                    gitConfig.save()
+                } catch (e: Throwable) {
+                    e.printStackTrace()
+                }
                 git.close()
                 SyncResult(success = true, message = "Clone completed successfully")
             } catch (e: OutOfMemoryError) {
+                targetDir.listFiles()?.forEach { it.deleteRecursively() }
                 SyncResult(success = false, message = "Speichermangel (OOM): Repository enthält große Dateien/Verlauf. Bitte Shallow-Clone aktivieren.")
             } catch (e: Throwable) {
+                targetDir.listFiles()?.forEach { it.deleteRecursively() }
                 SyncResult(success = false, message = "Clone failed: ${e.localizedMessage ?: e.javaClass.simpleName}")
             }
         }
@@ -190,11 +214,38 @@ class GitManager(private val context: Context) {
         val lock = repoLocks.computeIfAbsent(config.id) { Any() }
         synchronized(lock) {
             val targetDir = File(config.localPath)
-            val gitDir = File(targetDir, ".git")
-            if (gitDir.exists()) {
-                gitDir.deleteRecursively()
+            if (targetDir.exists()) {
+                targetDir.deleteRecursively()
             }
             return cloneRepository(config, progressListener)
+        }
+    }
+
+    fun restoreMissingFiles(config: GitRepositoryConfig): SyncResult {
+        val lock = repoLocks.computeIfAbsent(config.id) { Any() }
+        synchronized(lock) {
+            cleanupStaleLocks(config.localPath)
+            val targetDir = File(config.localPath)
+            if (!isGitRepo(config.localPath)) return SyncResult(false, "Kein Git-Repository vorhanden")
+
+            resetJGitInflaterCache()
+            var repository: Repository? = null
+            var git: Git? = null
+            return try {
+                repository = FileRepositoryBuilder().setGitDir(File(targetDir, ".git")).build()
+                git = Git(repository)
+                git.reset().setMode(ResetCommand.ResetType.HARD).call()
+                SyncResult(true, "Alle Dateien erfolgreich aus Git wiederhergestellt")
+            } catch (e: Throwable) {
+                SyncResult(false, "Wiederherstellung fehlgeschlagen: ${e.localizedMessage ?: e.javaClass.simpleName}")
+            } finally {
+                try {
+                    git?.close()
+                    repository?.close()
+                } catch (e: Throwable) {
+                    e.printStackTrace()
+                }
+            }
         }
     }
 
@@ -286,38 +337,51 @@ class GitManager(private val context: Context) {
                 e.printStackTrace()
             }
 
-            // Ensure tracking configuration is properly set in git config
+            // Ensure tracking configuration and ignorecase are properly set in git config
             try {
                 val gitConfig = repository.config
                 val currentRemote = gitConfig.getString("branch", targetBranch, "remote")
                 if (currentRemote.isNullOrBlank()) {
                     gitConfig.setString("branch", targetBranch, "remote", "origin")
                     gitConfig.setString("branch", targetBranch, "merge", "refs/heads/$targetBranch")
-                    gitConfig.save()
                 }
+                gitConfig.setBoolean("core", null, "ignorecase", true)
+                gitConfig.save()
             } catch (e: Throwable) {
                 e.printStackTrace()
             }
 
+            resetJGitInflaterCache()
+
             progressListener?.invoke("Checking local status...", 20)
-            val status = git.status().call()
+            var status = git.status().call()
+
+            // Safety mechanism: If tracked files are missing in working copy,
+            // restore them from Git instead of deleting them from remote!
+            if (status.missing.isNotEmpty()) {
+                progressListener?.invoke("Stelle fehlende Dateien aus Arbeitskopie wieder her...", 25)
+                try {
+                    val checkoutCmd = git.checkout()
+                    status.missing.forEach { checkoutCmd.addPath(it) }
+                    checkoutCmd.call()
+                    // Refresh status after checkout
+                    status = git.status().call()
+                } catch (e: Throwable) {
+                    e.printStackTrace()
+                }
+            }
 
             var commitsPushed = 0
             var commitsPulled = 0
 
-            // 1. If not PULL_ONLY, stage local changes and commit
+            // 1. If not PULL_ONLY, stage real local modifications and additions (excluding temp files)
             if (config.syncDirection != SyncDirection.PULL_ONLY) {
-                val hasChanges = status.hasUncommittedChanges() || status.untracked.isNotEmpty()
-                if (hasChanges) {
+                val realUntracked = status.untracked.filterNot { it.endsWith(".tmp") || it.startsWith("._") }
+                val hasRealChanges = status.modified.isNotEmpty() || realUntracked.isNotEmpty() || status.added.isNotEmpty()
+                if (hasRealChanges) {
                     progressListener?.invoke("Staging local changes...", 35)
-                    git.add().addFilepattern(".").call()
-                    // Stage deletions
-                    if (status.missing.isNotEmpty() || status.removed.isNotEmpty()) {
-                        val rm = git.rm()
-                        status.missing.forEach { rm.addFilepattern(it) }
-                        status.removed.forEach { rm.addFilepattern(it) }
-                        rm.call()
-                    }
+                    realUntracked.forEach { git.add().addFilepattern(it).call() }
+                    status.modified.forEach { git.add().addFilepattern(it).call() }
 
                     val dateStr = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date())
                     val msg = config.autoCommitMessage.replace("%timestamp%", dateStr)
@@ -345,14 +409,21 @@ class GitManager(private val context: Context) {
                 val pullResult = pullCmd.call()
                 if (!pullResult.isSuccessful) {
                     val mergeResult = pullResult.mergeResult
-                    if (mergeResult != null && mergeResult.mergeStatus == MergeResult.MergeStatus.CONFLICTING) {
-                        val conflicts = mergeResult.conflicts?.keys?.toList() ?: emptyList()
-                        return SyncResult(
-                            success = false,
-                            message = "Merge conflicts encountered in ${conflicts.size} file(s)",
-                            conflicts = conflicts
-                        )
+                    val mergeStatus = mergeResult?.mergeStatus
+                    val conflicts = mergeResult?.conflicts?.keys?.toList() ?: emptyList()
+                    val checkoutConflicts = mergeResult?.checkoutConflicts ?: emptyList()
+                    val errorMsg = when {
+                        conflicts.isNotEmpty() -> "Merge-Konflikte in ${conflicts.size} Datei(en): ${conflicts.take(3).joinToString()}"
+                        checkoutConflicts.isNotEmpty() -> "Dateikonflikt beim Aktualisieren: ${checkoutConflicts.take(3).joinToString()}"
+                        mergeStatus != null -> "Merge fehlgeschlagen ($mergeStatus)"
+                        pullResult.fetchResult?.messages?.isNotBlank() == true -> "Fetch fehlgeschlagen: ${pullResult.fetchResult.messages}"
+                        else -> "Pull fehlgeschlagen: Nicht erfolgreich"
                     }
+                    return SyncResult(
+                        success = false,
+                        message = errorMsg,
+                        conflicts = conflicts
+                    )
                 }
                 commitsPulled = 1
             }
@@ -374,11 +445,28 @@ class GitManager(private val context: Context) {
                         } else if (update.status == RemoteRefUpdate.Status.REJECTED_NONFASTFORWARD) {
                             return SyncResult(
                                 success = false,
-                                message = "Push rejected: Remote has newer changes. Please pull first."
+                                message = "Push abgelehnt (Non-Fast-Forward): Remote hat neuere Änderungen. Bitte 'Repository sauber neu klonen (Reset)' ausführen."
+                            )
+                        } else if (update.status != RemoteRefUpdate.Status.OK) {
+                            return SyncResult(
+                                success = false,
+                                message = "Push fehlgeschlagen: ${update.status} ${update.message ?: ""}"
                             )
                         }
                     }
                 }
+            }
+
+            // 4. Ensure any remaining missing files in working tree are restored after pull
+            try {
+                val finalStatus = git.status().call()
+                if (finalStatus.missing.isNotEmpty()) {
+                    val checkoutCmd = git.checkout()
+                    finalStatus.missing.forEach { checkoutCmd.addPath(it) }
+                    checkoutCmd.call()
+                }
+            } catch (e: Throwable) {
+                e.printStackTrace()
             }
 
             progressListener?.invoke("Sync complete!", 100)
