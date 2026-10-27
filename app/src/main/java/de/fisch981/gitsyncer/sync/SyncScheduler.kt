@@ -13,7 +13,7 @@ object SyncScheduler {
         val workManager = WorkManager.getInstance(context)
         val tag = "$TAG_PREFIX${repo.id}"
 
-        if (!repo.autoSyncEnabled || repo.syncIntervalMinutes <= 0) {
+        if (!repo.isEnabled || !repo.autoSyncEnabled || repo.syncIntervalMinutes <= 0) {
             workManager.cancelAllWorkByTag(tag)
             return
         }

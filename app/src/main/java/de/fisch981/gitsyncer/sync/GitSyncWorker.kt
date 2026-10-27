@@ -31,9 +31,9 @@ class GitSyncWorker(
         val targetRepoId = inputData.getString("repo_id")
         val reposToSync = if (targetRepoId != null) {
             val r = repoStore.getRepository(targetRepoId)
-            if (r != null) listOf(r) else emptyList()
+            if (r != null && r.isEnabled) listOf(r) else emptyList()
         } else {
-            repoStore.repositories.value.filter { it.autoSyncEnabled }
+            repoStore.repositories.value.filter { it.isEnabled && it.autoSyncEnabled }
         }
 
         if (reposToSync.isEmpty()) {

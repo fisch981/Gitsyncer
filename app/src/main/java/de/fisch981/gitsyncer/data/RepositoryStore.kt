@@ -6,6 +6,7 @@ import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import de.fisch981.gitsyncer.model.GitRepositoryConfig
 import de.fisch981.gitsyncer.model.SshKeyEntry
+import de.fisch981.gitsyncer.sync.SyncScheduler
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -132,6 +133,35 @@ class RepositoryStore(private val context: Context) {
         current.removeAll { it.id == repoId }
         _repositories.value = current
         prefs.edit().putString(KEY_REPOSITORIES, gson.toJson(current)).apply()
+    }
+
+    @Synchronized
+    fun toggleRepositoryEnabled(repoId: String): Boolean {
+        val current = _repositories.value.toMutableList()
+        val index = current.indexOfFirst { it.id == repoId }
+        if (index >= 0) {
+            val newState = !current[index].isEnabled
+            val updated = current[index].copy(isEnabled = newState)
+            current[index] = updated
+            _repositories.value = current
+            prefs.edit().putString(KEY_REPOSITORIES, gson.toJson(current)).apply()
+            SyncScheduler.scheduleRepo(context, updated)
+            return newState
+        }
+        return false
+    }
+
+    @Synchronized
+    fun setRepositoryEnabled(repoId: String, enabled: Boolean) {
+        val current = _repositories.value.toMutableList()
+        val index = current.indexOfFirst { it.id == repoId }
+        if (index >= 0) {
+            val updated = current[index].copy(isEnabled = enabled)
+            current[index] = updated
+            _repositories.value = current
+            prefs.edit().putString(KEY_REPOSITORIES, gson.toJson(current)).apply()
+            SyncScheduler.scheduleRepo(context, updated)
+        }
     }
 
     fun getRepository(id: String): GitRepositoryConfig? {

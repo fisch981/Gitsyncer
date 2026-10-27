@@ -6,6 +6,11 @@ und dieses Projekt hält sich an [Semantic Versioning](https://semver.org/lang/d
 
 ---
 
+## [1.2.0] - 2026-10-27
+
+### Geändert / Hinzugefügt
+- Funktion zum temporaeren Pausieren/Deaktivieren von Repositories hinzugefuegt und Menue-Texte neutralisiert
+
 ## [1.1.3] - 2026-10-25
 
 ### Behoben

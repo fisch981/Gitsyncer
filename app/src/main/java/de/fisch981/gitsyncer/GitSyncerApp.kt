@@ -28,9 +28,9 @@ class GitSyncerApp : Application() {
         }
 
         val repoStore = RepositoryStore.getInstance(this)
-        // Ensure background sync is scheduled for all auto-sync enabled repositories
+        // Ensure background sync is scheduled for all active auto-sync enabled repositories
         for (repo in repoStore.repositories.value) {
-            if (repo.autoSyncEnabled) {
+            if (repo.isEnabled && repo.autoSyncEnabled) {
                 SyncScheduler.scheduleRepo(this, repo)
             }
         }

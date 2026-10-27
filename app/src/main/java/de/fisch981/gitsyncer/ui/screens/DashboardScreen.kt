@@ -81,10 +81,14 @@ fun DashboardScreen(
                 actions = {
                     IconButton(
                         onClick = {
-                            if (repositories.isEmpty()) return@IconButton
+                            val activeRepos = repositories.filter { it.isEnabled }
+                            if (activeRepos.isEmpty()) {
+                                Toast.makeText(context, "Keine aktiven Repositories vorhanden.", Toast.LENGTH_SHORT).show()
+                                return@IconButton
+                            }
                             isSyncingAll = true
                             coroutineScope.launch {
-                                for (repo in repositories) {
+                                for (repo in activeRepos) {
                                     repoStore.updateRepoSyncStatus(repo.id, "RUNNING")
                                     val res = withContext(Dispatchers.IO) {
                                         gitManager.sync(repo)
@@ -97,15 +101,15 @@ fun DashboardScreen(
                                     }
                                 }
                                 isSyncingAll = false
-                                Toast.makeText(context, "Alle Repositories synchronisiert!", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(context, "${activeRepos.size} Repositories synchronisiert!", Toast.LENGTH_SHORT).show()
                             }
                         },
-                        enabled = !isSyncingAll && repositories.isNotEmpty()
+                        enabled = !isSyncingAll && repositories.any { it.isEnabled }
                     ) {
                         if (isSyncingAll) {
                             CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
                         } else {
-                            Icon(Icons.Default.Sync, contentDescription = "Alle synchronisieren")
+                            Icon(Icons.Default.Sync, contentDescription = "Aktive Repositories synchronisieren")
                         }
                     }
                     IconButton(onClick = onNavigateToSshKeys) {
@@ -202,7 +206,7 @@ fun DashboardScreen(
                             )
                             Spacer(modifier = Modifier.height(8.dp))
                             Text(
-                                "Synchronisiere beliebig viele Ordner (z.B. Obsidian Vaults, Markdown-Notizen oder Code) nahtlos mit GitHub, GitLab oder Gitea.\n\nAlle Profi-Funktionen & unbegrenzte Repositories sind 100% kostenlos freigeschaltet!",
+                                "Synchronisiere deine Ordner (z.B. Obsidian Vaults, Markdown-Notizen oder Code) zuverlässig mit GitHub, GitLab oder Gitea.",
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -227,6 +231,11 @@ fun DashboardScreen(
                             repo = repo,
                             onOpen = { onOpenRepo(repo.id) },
                             onEdit = { onEditRepo(repo.id) },
+                            onToggleEnabled = {
+                                val newState = repoStore.toggleRepositoryEnabled(repo.id)
+                                val msg = if (newState) "${repo.name} aktiviert" else "${repo.name} pausiert"
+                                Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+                            },
                             onSync = {
                                 coroutineScope.launch {
                                     repoStore.updateRepoSyncStatus(repo.id, "RUNNING")
@@ -256,6 +265,7 @@ fun RepositoryCard(
     repo: GitRepositoryConfig,
     onOpen: () -> Unit,
     onEdit: () -> Unit,
+    onToggleEnabled: () -> Unit,
     onSync: () -> Unit
 ) {
     Card(
@@ -285,17 +295,36 @@ fun RepositoryCard(
                     )
                 }
 
-                Surface(
-                    shape = MaterialTheme.shapes.extraSmall,
-                    color = MaterialTheme.colorScheme.primaryContainer
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    Text(
-                        text = repo.branch,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer,
-                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                    )
+                    if (!repo.isEnabled) {
+                        Surface(
+                            shape = MaterialTheme.shapes.extraSmall,
+                            color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.8f)
+                        ) {
+                            Text(
+                                text = "Pausiert",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onErrorContainer,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                            )
+                        }
+                    }
+                    Surface(
+                        shape = MaterialTheme.shapes.extraSmall,
+                        color = if (repo.isEnabled) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant
+                    ) {
+                        Text(
+                            text = repo.branch,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = if (repo.isEnabled) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                        )
+                    }
                 }
             }
 
@@ -307,7 +336,9 @@ fun RepositoryCard(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                val (statusColor, statusText, statusIcon) = when (repo.lastSyncStatus) {
+                val (statusColor, statusText, statusIcon) = if (!repo.isEnabled) {
+                    Triple(MaterialTheme.colorScheme.outline, "Pausiert (Sync inaktiv)", Icons.Default.PauseCircleFilled)
+                } else when (repo.lastSyncStatus) {
                     "SUCCESS" -> Triple(GitGreen, "Synchronisiert", Icons.Default.CheckCircle)
                     "RUNNING" -> Triple(MaterialTheme.colorScheme.primary, "Synchronisiert...", Icons.Default.Sync)
                     "CONFLICT" -> Triple(GitRed, "Merge-Konflikt", Icons.Default.Warning)
@@ -343,7 +374,7 @@ fun RepositoryCard(
                 )
             }
 
-            if (!repo.lastErrorMessage.isNullOrBlank() && repo.lastSyncStatus != "SUCCESS") {
+            if (!repo.lastErrorMessage.isNullOrBlank() && repo.lastSyncStatus != "SUCCESS" && repo.isEnabled) {
                 Spacer(modifier = Modifier.height(6.dp))
                 Text(
                     text = repo.lastErrorMessage,
@@ -367,6 +398,7 @@ fun RepositoryCard(
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Button(
                         onClick = onSync,
+                        enabled = repo.isEnabled,
                         contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
                     ) {
                         Icon(Icons.Default.Sync, contentDescription = null, modifier = Modifier.size(16.dp))
@@ -384,8 +416,17 @@ fun RepositoryCard(
                     }
                 }
 
-                IconButton(onClick = onEdit) {
-                    Icon(Icons.Default.Tune, contentDescription = "Konfigurieren")
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(onClick = onToggleEnabled) {
+                        Icon(
+                            if (repo.isEnabled) Icons.Default.PauseCircleOutline else Icons.Default.PlayCircleOutline,
+                            contentDescription = if (repo.isEnabled) "Repository pausieren" else "Repository aktivieren",
+                            tint = if (repo.isEnabled) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.primary
+                        )
+                    }
+                    IconButton(onClick = onEdit) {
+                        Icon(Icons.Default.Tune, contentDescription = "Konfigurieren")
+                    }
                 }
             }
         }

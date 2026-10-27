@@ -25,6 +25,7 @@ data class GitRepositoryConfig(
     val username: String = "",
     val sshKeyId: String? = null,
     val autoSyncEnabled: Boolean = true,
+    val isEnabled: Boolean = true,
     val syncIntervalMinutes: Int = 60,
     val syncDirection: SyncDirection = SyncDirection.TWO_WAY,
     val autoCommitMessage: String = "Sync %timestamp%",

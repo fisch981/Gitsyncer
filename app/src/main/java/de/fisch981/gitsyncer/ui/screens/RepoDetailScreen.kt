@@ -79,13 +79,45 @@ fun RepoDetailScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(repo.name) },
+                title = {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(repo.name)
+                        if (!repo.isEnabled) {
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Surface(
+                                shape = MaterialTheme.shapes.extraSmall,
+                                color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.8f)
+                            ) {
+                                Text(
+                                    text = "Pausiert",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onErrorContainer,
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                )
+                            }
+                        }
+                    }
+                },
                 navigationIcon = {
                     IconButton(onClick = onNavigateBack) {
                         Icon(Icons.Default.ArrowBack, contentDescription = "Zurück")
                     }
                 },
                 actions = {
+                    IconButton(
+                        onClick = {
+                            val newState = repoStore.toggleRepositoryEnabled(repo.id)
+                            val msg = if (newState) "${repo.name} aktiviert" else "${repo.name} pausiert"
+                            Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+                        }
+                    ) {
+                        Icon(
+                            if (repo.isEnabled) Icons.Default.PauseCircleOutline else Icons.Default.PlayCircleOutline,
+                            contentDescription = if (repo.isEnabled) "Pausieren" else "Aktivieren",
+                            tint = if (repo.isEnabled) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.primary
+                        )
+                    }
                     IconButton(
                         onClick = {
                             coroutineScope.launch {
@@ -375,6 +407,21 @@ fun RepoDetailScreen(
                         Card(modifier = Modifier.fillMaxWidth()) {
                             Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                 Text("Konfigurations-Details", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
+                                Divider()
+                                DetailRow("Status:", if (repo.isEnabled) "Aktiv" else "Pausiert (von Sync ausgenommen)")
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text("Repository aktiv:", fontWeight = FontWeight.Medium)
+                                    Switch(
+                                        checked = repo.isEnabled,
+                                        onCheckedChange = {
+                                            repoStore.toggleRepositoryEnabled(repo.id)
+                                        }
+                                    )
+                                }
                                 Divider()
                                 DetailRow("Remote URL:", repo.remoteUrl)
                                 DetailRow("Branch:", repo.branch)

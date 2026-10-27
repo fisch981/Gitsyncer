@@ -84,6 +84,7 @@ fun EditRepoScreen(
         )
     }
     var selectedSshKeyId by remember { mutableStateOf(existingRepo?.sshKeyId ?: sshKeys.firstOrNull()?.id) }
+    var isEnabled by remember { mutableStateOf(existingRepo?.isEnabled ?: true) }
     var autoSyncEnabled by remember { mutableStateOf(existingRepo?.autoSyncEnabled ?: true) }
     var shallowClone by remember { mutableStateOf(existingRepo?.shallowClone ?: true) }
     var syncIntervalMinutes by remember { mutableStateOf(existingRepo?.syncIntervalMinutes ?: 60) }
@@ -432,7 +433,22 @@ fun EditRepoScreen(
             // Sync Settings Card
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text("Synchronisations-Optionen (100% Kostenlos)", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Text("Synchronisations-Optionen", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Repository aktiv", fontWeight = FontWeight.SemiBold)
+                            Text("Pausierte Repositories werden von automatischen und manuellen Sammel-Syncs ausgenommen", style = MaterialTheme.typography.bodySmall)
+                        }
+                        Switch(
+                            checked = isEnabled,
+                            onCheckedChange = { isEnabled = it }
+                        )
+                    }
 
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -564,6 +580,7 @@ fun EditRepoScreen(
                         username = username.trim(),
                         sshKeyId = selectedSshKeyId,
                         autoSyncEnabled = autoSyncEnabled,
+                        isEnabled = isEnabled,
                         shallowClone = shallowClone,
                         syncIntervalMinutes = syncIntervalMinutes,
                         syncDirection = syncDirection,
@@ -623,6 +640,7 @@ fun EditRepoScreen(
                         username = username.trim(),
                         sshKeyId = selectedSshKeyId,
                         autoSyncEnabled = autoSyncEnabled,
+                        isEnabled = isEnabled,
                         shallowClone = shallowClone,
                         syncIntervalMinutes = syncIntervalMinutes,
                         syncDirection = syncDirection,
