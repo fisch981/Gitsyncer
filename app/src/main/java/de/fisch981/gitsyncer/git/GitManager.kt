@@ -27,10 +27,6 @@ class GitManager(private val context: Context) {
 
     private val repoStore = RepositoryStore.getInstance(context)
 
-    init {
-        System.setProperty("http.keepAlive", "false")
-    }
-
     private fun isTransientNetworkError(t: Throwable): Boolean {
         val msg = ((t.message ?: "") + " " + (t.cause?.message ?: "")).lowercase()
         return msg.contains("connection abort") ||
@@ -69,9 +65,34 @@ class GitManager(private val context: Context) {
     companion object {
         private val repoLocks = ConcurrentHashMap<String, Any>()
         private val cancelFlags = ConcurrentHashMap<String, java.util.concurrent.atomic.AtomicBoolean>()
+        private val activeTransports = ConcurrentHashMap<String, Transport>()
+        private val activeThreads = ConcurrentHashMap<String, Thread>()
 
-        fun cancelSync(repoId: String) {
-            cancelFlags[repoId]?.set(true)
+        fun cancelSync(repoId: String, localPath: String? = null) {
+            cancelFlags.computeIfAbsent(repoId) { java.util.concurrent.atomic.AtomicBoolean(false) }.set(true)
+            try {
+                activeTransports[repoId]?.close()
+            } catch (e: Throwable) {
+                e.printStackTrace()
+            }
+            try {
+                activeThreads[repoId]?.interrupt()
+            } catch (e: Throwable) {
+                e.printStackTrace()
+            }
+            activeTransports.remove(repoId)
+            activeThreads.remove(repoId)
+            if (!localPath.isNullOrBlank()) {
+                cleanupStaleLocks(localPath)
+            }
+        }
+
+        fun isSyncCancelled(repoId: String): Boolean {
+            return cancelFlags[repoId]?.get() == true
+        }
+
+        fun resetCancelFlag(repoId: String) {
+            cancelFlags.computeIfAbsent(repoId) { java.util.concurrent.atomic.AtomicBoolean(false) }.set(false)
         }
 
         fun cleanupStaleLocks(localPath: String) {
@@ -144,10 +165,7 @@ class GitManager(private val context: Context) {
 
     private fun getTransportConfigCallback(config: GitRepositoryConfig): TransportConfigCallback {
         return TransportConfigCallback { transport ->
-            if (transport is TransportHttp) {
-                // Deaktiviere Keep-Alive Reusing: Verhindert "Software caused connection abort" auf Android Mobilfunknetzen
-                transport.setAdditionalHeaders(mapOf("Connection" to "close"))
-            }
+            activeTransports[config.id] = transport
             if (transport is SshTransport && config.authType == AuthType.SSH_KEY) {
                 val sshKey = repoStore.getSshKey(config.sshKeyId)
                 val sessionFactory = object : org.eclipse.jgit.transport.ssh.jsch.JschConfigSessionFactory() {
@@ -185,99 +203,117 @@ class GitManager(private val context: Context) {
             val targetDir = File(config.localPath)
             val maxRetries = 3
             var lastResult: SyncResult? = null
+            val cancelFlag = cancelFlags.computeIfAbsent(config.id) { java.util.concurrent.atomic.AtomicBoolean(false) }
+            cancelFlag.set(false)
+            activeThreads[config.id] = Thread.currentThread()
 
-            for (attempt in 1..maxRetries) {
-                if (!targetDir.exists()) {
-                    targetDir.mkdirs()
-                } else {
-                    cleanupStaleLocks(config.localPath)
-                    // Clean directory if it contains leftovers from a failed previous clone
-                    if (targetDir.listFiles()?.isNotEmpty() == true) {
+            try {
+                for (attempt in 1..maxRetries) {
+                    if (cancelFlag.get()) {
                         targetDir.listFiles()?.forEach { it.deleteRecursively() }
-                    }
-                }
-
-                resetJGitInflaterCache()
-
-                val cancelFlag = cancelFlags.computeIfAbsent(config.id) { java.util.concurrent.atomic.AtomicBoolean(false) }
-                cancelFlag.set(false)
-
-                if (attempt > 1) {
-                    progressListener?.invoke("Wiederhole Klonversuch ($attempt/$maxRetries) nach Netzwerkunterbrechung...", 5)
-                    try { Thread.sleep(2000L * (attempt - 1)) } catch (_: Throwable) {}
-                }
-
-                val monitor = object : ProgressMonitor {
-                    private var totalTasks = 0
-                    private var currentWork = 0
-                    private var totalWork = 0
-
-                    override fun start(totalTasks: Int) {
-                        this.totalTasks = totalTasks
+                        return SyncResult(success = false, message = "Klon-Vorgang durch Benutzer abgebrochen")
                     }
 
-                    override fun beginTask(title: String?, totalWork: Int) {
-                        this.totalWork = totalWork
-                        this.currentWork = 0
-                        progressListener?.invoke(title ?: "Cloning...", 0)
+                    if (!targetDir.exists()) {
+                        targetDir.mkdirs()
+                    } else {
+                        cleanupStaleLocks(config.localPath)
+                        // Clean directory if it contains leftovers from a failed previous clone
+                        if (targetDir.listFiles()?.isNotEmpty() == true) {
+                            targetDir.listFiles()?.forEach { it.deleteRecursively() }
+                        }
                     }
 
-                    override fun update(completed: Int) {
-                        currentWork += completed
-                        val pct = if (totalWork > 0) (currentWork * 100) / totalWork else 0
-                        progressListener?.invoke("Downloading: $pct%", pct)
+                    resetJGitInflaterCache()
+
+                    if (attempt > 1) {
+                        progressListener?.invoke("Wiederhole Klonversuch ($attempt/$maxRetries) nach Netzwerkunterbrechung...", 5)
+                        try { Thread.sleep(2000L * (attempt - 1)) } catch (_: Throwable) {}
                     }
 
-                    override fun endTask() {}
-                    override fun isCancelled(): Boolean = cancelFlag.get()
-                    override fun showDuration(enabled: Boolean) {}
-                }
-
-                try {
-                    val targetBranch = config.branch.ifBlank { "main" }
-                    val cloneCommand = Git.cloneRepository()
-                        .setURI(config.remoteUrl)
-                        .setDirectory(targetDir)
-                        .setBranch(targetBranch)
-                        .setTimeout(300)
-                        .setProgressMonitor(monitor)
-
-                    if (config.shallowClone) {
-                        cloneCommand.setDepth(1)
+                    if (cancelFlag.get()) {
+                        targetDir.listFiles()?.forEach { it.deleteRecursively() }
+                        return SyncResult(success = false, message = "Klon-Vorgang durch Benutzer abgebrochen")
                     }
 
-                    getCredentialsProvider(config)?.let { cloneCommand.setCredentialsProvider(it) }
-                    cloneCommand.setTransportConfigCallback(getTransportConfigCallback(config))
+                    val monitor = object : ProgressMonitor {
+                        private var totalTasks = 0
+                        private var currentWork = 0
+                        private var totalWork = 0
 
-                    val git = cloneCommand.call()
+                        override fun start(totalTasks: Int) {
+                            this.totalTasks = totalTasks
+                        }
+
+                        override fun beginTask(title: String?, totalWork: Int) {
+                            this.totalWork = totalWork
+                            this.currentWork = 0
+                            progressListener?.invoke(title ?: "Cloning...", 0)
+                        }
+
+                        override fun update(completed: Int) {
+                            currentWork += completed
+                            val pct = if (totalWork > 0) (currentWork * 100) / totalWork else 0
+                            progressListener?.invoke("Downloading: $pct%", pct)
+                        }
+
+                        override fun endTask() {}
+                        override fun isCancelled(): Boolean = cancelFlag.get()
+                        override fun showDuration(enabled: Boolean) {}
+                    }
+
                     try {
-                        val gitConfig = git.repository.config
-                        gitConfig.setBoolean("core", null, "ignorecase", true)
-                        gitConfig.setInt("http", null, "postBuffer", 32 * 1024 * 1024)
-                        gitConfig.save()
+                        val targetBranch = config.branch.ifBlank { "main" }
+                        val cloneCommand = Git.cloneRepository()
+                            .setURI(config.remoteUrl)
+                            .setDirectory(targetDir)
+                            .setBranch(targetBranch)
+                            .setTimeout(60)
+                            .setProgressMonitor(monitor)
+
+                        if (config.shallowClone) {
+                            cloneCommand.setDepth(1)
+                        }
+
+                        getCredentialsProvider(config)?.let { cloneCommand.setCredentialsProvider(it) }
+                        cloneCommand.setTransportConfigCallback(getTransportConfigCallback(config))
+
+                        val git = cloneCommand.call()
+                        try {
+                            val gitConfig = git.repository.config
+                            gitConfig.setBoolean("core", null, "ignorecase", true)
+                            gitConfig.setInt("http", null, "postBuffer", 64 * 1024 * 1024)
+                            gitConfig.save()
+                        } catch (e: Throwable) {
+                            e.printStackTrace()
+                        }
+                        git.close()
+                        return SyncResult(success = true, message = "Clone completed successfully")
+                    } catch (e: org.eclipse.jgit.api.errors.CanceledException) {
+                        targetDir.listFiles()?.forEach { it.deleteRecursively() }
+                        return SyncResult(success = false, message = "Klon-Vorgang durch Benutzer abgebrochen")
+                    } catch (e: OutOfMemoryError) {
+                        targetDir.listFiles()?.forEach { it.deleteRecursively() }
+                        return SyncResult(success = false, message = "Speichermangel (OOM): Repository enthält große Dateien/Verlauf. Bitte Shallow-Clone aktivieren.")
                     } catch (e: Throwable) {
-                        e.printStackTrace()
-                    }
-                    git.close()
-                    return SyncResult(success = true, message = "Clone completed successfully")
-                } catch (e: org.eclipse.jgit.api.errors.CanceledException) {
-                    targetDir.listFiles()?.forEach { it.deleteRecursively() }
-                    return SyncResult(success = false, message = "Klon-Vorgang durch Benutzer abgebrochen")
-                } catch (e: OutOfMemoryError) {
-                    targetDir.listFiles()?.forEach { it.deleteRecursively() }
-                    return SyncResult(success = false, message = "Speichermangel (OOM): Repository enthält große Dateien/Verlauf. Bitte Shallow-Clone aktivieren.")
-                } catch (e: Throwable) {
-                    targetDir.listFiles()?.forEach { it.deleteRecursively() }
-                    val isRetryable = isTransientNetworkError(e)
-                    val errorMsg = e.localizedMessage ?: e.javaClass.simpleName
-                    lastResult = SyncResult(success = false, message = "Clone failed: $errorMsg")
-                    if (!isRetryable || attempt == maxRetries) {
-                        return lastResult
+                        targetDir.listFiles()?.forEach { it.deleteRecursively() }
+                        if (cancelFlag.get()) {
+                            return SyncResult(success = false, message = "Klon-Vorgang durch Benutzer abgebrochen")
+                        }
+                        val isRetryable = isTransientNetworkError(e)
+                        val errorMsg = e.localizedMessage ?: e.javaClass.simpleName
+                        lastResult = SyncResult(success = false, message = "Clone failed: $errorMsg")
+                        if (!isRetryable || attempt == maxRetries) {
+                            return lastResult
+                        }
                     }
                 }
-            }
 
-            return lastResult ?: SyncResult(success = false, message = "Clone failed")
+                return lastResult ?: SyncResult(success = false, message = "Clone failed")
+            } finally {
+                activeTransports.remove(config.id)
+                activeThreads.remove(config.id)
+            }
         }
     }
 
@@ -331,35 +367,59 @@ class GitManager(private val context: Context) {
         synchronized(lock) {
             val maxRetries = 3
             var result: SyncResult? = null
+            val cancelFlag = cancelFlags.computeIfAbsent(config.id) { java.util.concurrent.atomic.AtomicBoolean(false) }
+            cancelFlag.set(false)
+            activeThreads[config.id] = Thread.currentThread()
 
-            for (attempt in 1..maxRetries) {
-                cleanupStaleLocks(config.localPath)
-                if (attempt > 1) {
-                    progressListener?.invoke("Wiederhole Synchronisation ($attempt/$maxRetries)...", 10)
-                    try { Thread.sleep(2000L * (attempt - 1)) } catch (_: Throwable) {}
-                }
+            try {
+                for (attempt in 1..maxRetries) {
+                    if (cancelFlag.get()) {
+                        return SyncResult(success = false, message = "Synchronisation durch Benutzer abgebrochen")
+                    }
 
-                result = performSync(config, progressListener)
-
-                // Auto-recovery if "Inflater has been closed" occurs
-                if (!result.success && result.message.contains("Inflater has been closed", ignoreCase = true)) {
-                    progressListener?.invoke("Zlib Inflater-Bereinigung & Selbstreparatur...", 30)
-                    resetJGitInflaterCache()
                     cleanupStaleLocks(config.localPath)
+                    if (attempt > 1) {
+                        progressListener?.invoke("Wiederhole Synchronisation ($attempt/$maxRetries)...", 10)
+                        try { Thread.sleep(2000L * (attempt - 1)) } catch (_: Throwable) {}
+                    }
+
+                    if (cancelFlag.get()) {
+                        return SyncResult(success = false, message = "Synchronisation durch Benutzer abgebrochen")
+                    }
+
                     result = performSync(config, progressListener)
+
+                    if (cancelFlag.get() || result.message.contains("abgebrochen", ignoreCase = true)) {
+                        return SyncResult(success = false, message = "Synchronisation durch Benutzer abgebrochen")
+                    }
+
+                    // Auto-recovery if "Inflater has been closed" occurs
+                    if (!result.success && result.message.contains("Inflater has been closed", ignoreCase = true)) {
+                        progressListener?.invoke("Zlib Inflater-Bereinigung & Selbstreparatur...", 30)
+                        resetJGitInflaterCache()
+                        cleanupStaleLocks(config.localPath)
+                        result = performSync(config, progressListener)
+                    }
+
+                    if (cancelFlag.get() || result.message.contains("abgebrochen", ignoreCase = true)) {
+                        return SyncResult(success = false, message = "Synchronisation durch Benutzer abgebrochen")
+                    }
+
+                    if (result.success) {
+                        return result
+                    }
+
+                    val isNetworkError = isTransientNetworkErrorMsg(result.message)
+                    if (!isNetworkError || attempt == maxRetries) {
+                        return result
+                    }
                 }
 
-                if (result.success) {
-                    return result
-                }
-
-                val isNetworkError = isTransientNetworkErrorMsg(result.message)
-                if (!isNetworkError || attempt == maxRetries) {
-                    return result
-                }
+                return result ?: SyncResult(success = false, message = "Sync fehlgeschlagen")
+            } finally {
+                activeTransports.remove(config.id)
+                activeThreads.remove(config.id)
             }
-
-            return result ?: SyncResult(success = false, message = "Sync fehlgeschlagen")
         }
     }
 
@@ -367,6 +427,10 @@ class GitManager(private val context: Context) {
         config: GitRepositoryConfig,
         progressListener: ((String, Int) -> Unit)? = null
     ): SyncResult {
+        val cancelFlag = cancelFlags.computeIfAbsent(config.id) { java.util.concurrent.atomic.AtomicBoolean(false) }
+        if (cancelFlag.get()) {
+            return SyncResult(success = false, message = "Synchronisation durch Benutzer abgebrochen")
+        }
         val targetDir = File(config.localPath)
         if (!isGitRepo(config.localPath)) {
             // Need initial clone
@@ -484,8 +548,10 @@ class GitManager(private val context: Context) {
 
             // 2. Fetch and Pull from remote
             if (config.syncDirection != SyncDirection.PUSH_ONLY) {
+                if (cancelFlag.get()) {
+                    return SyncResult(success = false, message = "Synchronisation durch Benutzer abgebrochen")
+                }
                 progressListener?.invoke("Pulling from remote...", 65)
-                val cancelFlag = cancelFlags.computeIfAbsent(config.id) { java.util.concurrent.atomic.AtomicBoolean(false) }
                 val monitor = object : ProgressMonitor {
                     override fun start(totalTasks: Int) {}
                     override fun beginTask(title: String?, totalWork: Int) {
@@ -500,12 +566,15 @@ class GitManager(private val context: Context) {
                 val pullCmd = git.pull()
                     .setRemote("origin")
                     .setRemoteBranchName(targetBranch)
-                    .setTimeout(300)
+                    .setTimeout(60)
                     .setProgressMonitor(monitor)
                 creds?.let { pullCmd.setCredentialsProvider(it) }
                 pullCmd.setTransportConfigCallback(transportCallback)
 
                 val pullResult = pullCmd.call()
+                if (cancelFlag.get()) {
+                    return SyncResult(success = false, message = "Synchronisation durch Benutzer abgebrochen")
+                }
                 if (!pullResult.isSuccessful) {
                     val mergeResult = pullResult.mergeResult
                     val mergeStatus = mergeResult?.mergeStatus
@@ -529,8 +598,10 @@ class GitManager(private val context: Context) {
 
             // 3. Push to remote
             if (config.syncDirection != SyncDirection.PULL_ONLY) {
+                if (cancelFlag.get()) {
+                    return SyncResult(success = false, message = "Synchronisation durch Benutzer abgebrochen")
+                }
                 progressListener?.invoke("Pushing commits to remote...", 85)
-                val cancelFlag = cancelFlags.computeIfAbsent(config.id) { java.util.concurrent.atomic.AtomicBoolean(false) }
                 val monitor = object : ProgressMonitor {
                     override fun start(totalTasks: Int) {}
                     override fun beginTask(title: String?, totalWork: Int) {
@@ -545,11 +616,14 @@ class GitManager(private val context: Context) {
                 val pushCmd = git.push()
                     .setRemote("origin")
                     .setRefSpecs(RefSpec("refs/heads/$targetBranch:refs/heads/$targetBranch"))
-                    .setTimeout(300)
+                    .setTimeout(60)
                     .setProgressMonitor(monitor)
                 creds?.let { pushCmd.setCredentialsProvider(it) }
                 pushCmd.setTransportConfigCallback(transportCallback)
                 val pushResults = pushCmd.call()
+                if (cancelFlag.get()) {
+                    return SyncResult(success = false, message = "Synchronisation durch Benutzer abgebrochen")
+                }
                 for (pushRes in pushResults) {
                     for (update in pushRes.remoteUpdates) {
                         if (update.status == RemoteRefUpdate.Status.OK || update.status == RemoteRefUpdate.Status.UP_TO_DATE) {
@@ -590,21 +664,26 @@ class GitManager(private val context: Context) {
             )
         } catch (e: org.eclipse.jgit.api.errors.CanceledException) {
             SyncResult(success = false, message = "Synchronisation durch Benutzer abgebrochen")
-        } catch (e: org.eclipse.jgit.api.errors.RefNotAdvertisedException) {
-            // Self-repair: If remote rejected due to wrong ref (like master), perform clean reclone
-            progressListener?.invoke("Bereinige lokale Branch-Referenz und klone neu...", 10)
-            val recloneRes = recloneRepository(config, progressListener)
-            if (recloneRes.success) {
-                SyncResult(success = true, message = "Automatische Reparatur & Synchronisation erfolgreich")
-            } else {
-                SyncResult(success = false, message = "Branch-Fehler: ${e.localizedMessage}")
-            }
-        } catch (e: OutOfMemoryError) {
-            SyncResult(success = false, message = "Speichermangel (OOM): Repository enthält zu große Dateien.")
         } catch (e: Throwable) {
-            val msg = e.localizedMessage ?: e.javaClass.simpleName
-            SyncResult(success = false, message = "Sync error: $msg")
+            if (isSyncCancelled(config.id)) {
+                SyncResult(success = false, message = "Synchronisation durch Benutzer abgebrochen")
+            } else if (e is org.eclipse.jgit.api.errors.RefNotAdvertisedException) {
+                // Self-repair: If remote rejected due to wrong ref (like master), perform clean reclone
+                progressListener?.invoke("Bereinige lokale Branch-Referenz und klone neu...", 10)
+                val recloneRes = recloneRepository(config, progressListener)
+                if (recloneRes.success) {
+                    SyncResult(success = true, message = "Automatische Reparatur & Synchronisation erfolgreich")
+                } else {
+                    SyncResult(success = false, message = "Branch-Fehler: ${e.localizedMessage}")
+                }
+            } else if (e is OutOfMemoryError) {
+                SyncResult(success = false, message = "Speichermangel (OOM): Repository enthält zu große Dateien.")
+            } else {
+                val msg = e.localizedMessage ?: e.javaClass.simpleName
+                SyncResult(success = false, message = "Sync error: $msg")
+            }
         } finally {
+            activeTransports.remove(config.id)
             try {
                 git?.close()
                 repository?.close()

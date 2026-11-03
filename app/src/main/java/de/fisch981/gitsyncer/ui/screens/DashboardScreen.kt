@@ -88,8 +88,7 @@ fun DashboardScreen(
                                 syncAllJob = null
                                 isSyncingAll = false
                                 repositories.forEach {
-                                    GitManager.cancelSync(it.id)
-                                    GitManager.cleanupStaleLocks(it.localPath)
+                                    GitManager.cancelSync(it.id, it.localPath)
                                     if (it.lastSyncStatus == "RUNNING") {
                                         repoStore.updateRepoSyncStatus(it.id, "CANCELLED", "Sammel-Sync abgebrochen")
                                     }
@@ -106,9 +105,15 @@ fun DashboardScreen(
                             isSyncingAll = true
                             syncAllJob = coroutineScope.launch {
                                 for (repo in activeRepos) {
+                                    if (!isSyncingAll) break
+                                    GitManager.resetCancelFlag(repo.id)
                                     repoStore.updateRepoSyncStatus(repo.id, "RUNNING")
                                     val res = withContext(Dispatchers.IO) {
                                         gitManager.sync(repo)
+                                    }
+                                    if (!isSyncingAll || GitManager.isSyncCancelled(repo.id)) {
+                                        repoStore.updateRepoSyncStatus(repo.id, "CANCELLED", "Sammel-Sync abgebrochen")
+                                        break
                                     }
                                     if (res.success) {
                                         repoStore.updateRepoSyncStatus(repo.id, "SUCCESS")
@@ -256,11 +261,16 @@ fun DashboardScreen(
                             },
                             onSync = {
                                 val job = coroutineScope.launch {
+                                    GitManager.resetCancelFlag(repo.id)
                                     repoStore.updateRepoSyncStatus(repo.id, "RUNNING")
                                     val res = withContext(Dispatchers.IO) {
                                         gitManager.sync(repo)
                                     }
                                     activeSyncJobs.remove(repo.id)
+                                    val current = repoStore.getRepository(repo.id)
+                                    if (current?.lastSyncStatus == "CANCELLED" || GitManager.isSyncCancelled(repo.id)) {
+                                        return@launch
+                                    }
                                     if (res.success) {
                                         repoStore.updateRepoSyncStatus(repo.id, "SUCCESS")
                                         Toast.makeText(context, "${repo.name}: Synchronisiert!", Toast.LENGTH_SHORT).show()
@@ -273,10 +283,9 @@ fun DashboardScreen(
                                 activeSyncJobs[repo.id] = job
                             },
                             onCancel = {
-                                GitManager.cancelSync(repo.id)
+                                GitManager.cancelSync(repo.id, repo.localPath)
                                 activeSyncJobs[repo.id]?.cancel()
                                 activeSyncJobs.remove(repo.id)
-                                GitManager.cleanupStaleLocks(repo.localPath)
                                 repoStore.updateRepoSyncStatus(repo.id, "CANCELLED", "Synchronisation durch Benutzer abgebrochen")
                                 Toast.makeText(context, "${repo.name}: Synchronisation abgebrochen", Toast.LENGTH_SHORT).show()
                             }

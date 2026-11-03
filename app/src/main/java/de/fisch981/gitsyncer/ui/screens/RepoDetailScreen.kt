@@ -124,8 +124,7 @@ fun RepoDetailScreen(
                             onClick = {
                                 activeSyncJob?.cancel()
                                 activeSyncJob = null
-                                GitManager.cancelSync(repo.id)
-                                GitManager.cleanupStaleLocks(repo.localPath)
+                                GitManager.cancelSync(repo.id, repo.localPath)
                                 isLoading = false
                                 repoStore.updateRepoSyncStatus(repo.id, "CANCELLED", "Synchronisation durch Benutzer abgebrochen")
                                 Toast.makeText(context, "Synchronisation abgebrochen", Toast.LENGTH_SHORT).show()
@@ -138,6 +137,7 @@ fun RepoDetailScreen(
                         IconButton(
                             onClick = {
                                 activeSyncJob = coroutineScope.launch {
+                                    GitManager.resetCancelFlag(repo.id)
                                     isLoading = true
                                     repoStore.updateRepoSyncStatus(repo.id, "RUNNING")
                                     val result = withContext(Dispatchers.IO) {
@@ -145,6 +145,11 @@ fun RepoDetailScreen(
                                     }
                                     isLoading = false
                                     activeSyncJob = null
+                                    val current = repoStore.getRepository(repo.id)
+                                    if (current?.lastSyncStatus == "CANCELLED" || GitManager.isSyncCancelled(repo.id)) {
+                                        refreshData()
+                                        return@launch
+                                    }
                                     if (result.success) {
                                         repoStore.updateRepoSyncStatus(repo.id, "SUCCESS")
                                         Toast.makeText(context, "Erfolgreich synchronisiert!", Toast.LENGTH_SHORT).show()
@@ -228,12 +233,18 @@ fun RepoDetailScreen(
                                                 return@Button
                                             }
                                             coroutineScope.launch {
+                                                GitManager.resetCancelFlag(repo.id)
                                                 isLoading = true
                                                 val res = withContext(Dispatchers.IO) {
                                                     val tempRepo = repo.copy(autoCommitMessage = commitMessage)
                                                     gitManager.sync(tempRepo)
                                                 }
                                                 isLoading = false
+                                                val current = repoStore.getRepository(repo.id)
+                                                if (current?.lastSyncStatus == "CANCELLED" || GitManager.isSyncCancelled(repo.id)) {
+                                                    refreshData()
+                                                    return@launch
+                                                }
                                                 if (res.success) {
                                                     commitMessage = ""
                                                     Toast.makeText(context, "Commit & Push erfolgreich!", Toast.LENGTH_SHORT).show()
@@ -490,11 +501,18 @@ fun RepoDetailScreen(
                         OutlinedButton(
                             onClick = {
                                 coroutineScope.launch {
+                                    GitManager.resetCancelFlag(repo.id)
                                     isLoading = true
+                                    repoStore.updateRepoSyncStatus(repo.id, "RUNNING")
                                     val res = withContext(Dispatchers.IO) {
                                         gitManager.recloneRepository(repo)
                                     }
                                     isLoading = false
+                                    val current = repoStore.getRepository(repo.id)
+                                    if (current?.lastSyncStatus == "CANCELLED" || GitManager.isSyncCancelled(repo.id)) {
+                                        refreshData()
+                                        return@launch
+                                    }
                                     if (res.success) {
                                         repoStore.updateRepoSyncStatus(repo.id, "SUCCESS")
                                         Toast.makeText(context, "Erfolgreich sauber neu geklont!", Toast.LENGTH_SHORT).show()

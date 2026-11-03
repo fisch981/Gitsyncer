@@ -6,6 +6,11 @@ und dieses Projekt hält sich an [Semantic Versioning](https://semver.org/lang/d
 
 ---
 
+## [1.2.4] - 2026-11-03
+
+### Geändert / Hinzugefügt
+- Sofortiger Abbruch haengender Socket-Verbindungen (Transport close & Thread Interruption), Deaktivierung fehlerhafter Connection:close-Header fuer stabile Git-Packfile-Uebertragungen grosser Repositories und Timeout-Optimierung
+
 ## [1.2.3] - 2026-11-03
 
 ### Geändert / Hinzugefügt

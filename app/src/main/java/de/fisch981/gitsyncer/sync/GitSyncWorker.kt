@@ -43,11 +43,17 @@ class GitSyncWorker(
         var anyFailed = false
 
         for (repo in reposToSync) {
+            if (GitManager.isSyncCancelled(repo.id)) continue
             repoStore.updateRepoSyncStatus(repo.id, "RUNNING")
             showNotification(repo.name, "Synchronizing...")
 
             val result = gitManager.sync(repo) { message, _ ->
                 showNotification(repo.name, message)
+            }
+
+            if (GitManager.isSyncCancelled(repo.id) || result.message.contains("abgebrochen", ignoreCase = true)) {
+                repoStore.updateRepoSyncStatus(repo.id, "CANCELLED", "Synchronisation abgebrochen")
+                continue
             }
 
             if (result.success) {
