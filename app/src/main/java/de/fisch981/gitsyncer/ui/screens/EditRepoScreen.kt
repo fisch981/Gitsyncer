@@ -119,7 +119,13 @@ fun EditRepoScreen(
                     p
                 }
             } ?: uri.toString()
-            localPath = path
+            val cleanPath = path.trim().trimEnd('/', '\\')
+            val cleanBase = defaultBaseDir.trim().trimEnd('/', '\\')
+            localPath = if (cleanPath.equals(cleanBase, ignoreCase = true) && name.isNotBlank()) {
+                "$cleanBase/${name.trim()}"
+            } else {
+                cleanPath
+            }
         }
     }
 
@@ -269,6 +275,35 @@ fun EditRepoScreen(
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )
+
+                    val cleanCurrentPath = localPath.trim().trimEnd('/', '\\')
+                    val cleanBaseDir = defaultBaseDir.trim().trimEnd('/', '\\')
+                    if (cleanCurrentPath.equals(cleanBaseDir, ignoreCase = true) && cleanCurrentPath.isNotBlank()) {
+                        Surface(
+                            shape = MaterialTheme.shapes.small,
+                            color = MaterialTheme.colorScheme.errorContainer
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text(
+                                    "Achtung: Dies ist das Basis-Verzeichnis! Repositories sollten in einem eigenen Unterordner liegen.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onErrorContainer,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                if (name.isNotBlank()) {
+                                    TextButton(onClick = { localPath = "$cleanBaseDir/${name.trim()}" }) {
+                                        Text("/$name anfügen")
+                                    }
+                                }
+                            }
+                        }
+                    }
 
                     OutlinedTextField(
                         value = branch,
@@ -569,11 +604,18 @@ fun EditRepoScreen(
                         return@Button
                     }
 
+                    val cleanBase = defaultBaseDir.trim().trimEnd('/', '\\')
+                    var resolvedPath = localPath.trim().trimEnd('/', '\\')
+                    if (resolvedPath.equals(cleanBase, ignoreCase = true) && name.isNotBlank()) {
+                        resolvedPath = "$cleanBase/${name.trim()}"
+                        localPath = resolvedPath
+                    }
+
                     val updatedConfig = GitRepositoryConfig(
                         id = existingRepo?.id ?: java.util.UUID.randomUUID().toString(),
                         name = name.trim(),
                         remoteUrl = remoteUrl.trim(),
-                        localPath = localPath.trim(),
+                        localPath = resolvedPath,
                         branch = branch.trim().ifBlank { "main" },
                         authType = authType,
                         tokenOrPassword = tokenOrPassword.trim(),
@@ -629,11 +671,18 @@ fun EditRepoScreen(
                         return@OutlinedButton
                     }
 
+                    val cleanBase = defaultBaseDir.trim().trimEnd('/', '\\')
+                    var resolvedPath = localPath.trim().trimEnd('/', '\\')
+                    if (resolvedPath.equals(cleanBase, ignoreCase = true) && name.isNotBlank()) {
+                        resolvedPath = "$cleanBase/${name.trim()}"
+                        localPath = resolvedPath
+                    }
+
                     val updatedConfig = GitRepositoryConfig(
                         id = existingRepo?.id ?: java.util.UUID.randomUUID().toString(),
                         name = name.trim(),
                         remoteUrl = remoteUrl.trim(),
-                        localPath = localPath.trim(),
+                        localPath = resolvedPath,
                         branch = branch.trim().ifBlank { "main" },
                         authType = authType,
                         tokenOrPassword = tokenOrPassword.trim(),

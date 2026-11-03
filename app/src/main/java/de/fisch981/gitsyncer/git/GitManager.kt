@@ -27,6 +27,45 @@ class GitManager(private val context: Context) {
 
     private val repoStore = RepositoryStore.getInstance(context)
 
+    init {
+        System.setProperty("http.keepAlive", "false")
+    }
+
+    private fun isTransientNetworkError(t: Throwable): Boolean {
+        val msg = ((t.message ?: "") + " " + (t.cause?.message ?: "")).lowercase()
+        return msg.contains("connection abort") ||
+                msg.contains("connection reset") ||
+                msg.contains("recv failed") ||
+                msg.contains("timed out") ||
+                msg.contains("timeout") ||
+                msg.contains("broken pipe") ||
+                msg.contains("unexpected end of file") ||
+                msg.contains("premature eof") ||
+                msg.contains("software caused connection abort") ||
+                msg.contains("closed by peer") ||
+                t is java.net.SocketException ||
+                t is java.net.SocketTimeoutException ||
+                t is java.io.InterruptedIOException ||
+                t is org.eclipse.jgit.errors.TransportException
+    }
+
+    private fun isTransientNetworkErrorMsg(msg: String?): Boolean {
+        if (msg == null) return false
+        val m = msg.lowercase()
+        return m.contains("connection abort") ||
+                m.contains("connection reset") ||
+                m.contains("recv failed") ||
+                m.contains("timed out") ||
+                m.contains("timeout") ||
+                m.contains("broken pipe") ||
+                m.contains("unexpected end of file") ||
+                m.contains("premature eof") ||
+                m.contains("software caused connection abort") ||
+                m.contains("closed by peer") ||
+                m.contains("socketexception") ||
+                m.contains("transportexception")
+    }
+
     companion object {
         private val repoLocks = ConcurrentHashMap<String, Any>()
 
@@ -100,11 +139,17 @@ class GitManager(private val context: Context) {
 
     private fun getTransportConfigCallback(config: GitRepositoryConfig): TransportConfigCallback {
         return TransportConfigCallback { transport ->
+            if (transport is TransportHttp) {
+                // Deaktiviere Keep-Alive Reusing: Verhindert "Software caused connection abort" auf Android Mobilfunknetzen
+                transport.setAdditionalHeaders(mapOf("Connection" to "close"))
+            }
             if (transport is SshTransport && config.authType == AuthType.SSH_KEY) {
                 val sshKey = repoStore.getSshKey(config.sshKeyId)
                 val sessionFactory = object : org.eclipse.jgit.transport.ssh.jsch.JschConfigSessionFactory() {
                     override fun configure(hc: org.eclipse.jgit.transport.ssh.jsch.OpenSshConfig.Host?, session: Session?) {
                         session?.setConfig("StrictHostKeyChecking", "no")
+                        session?.setConfig("ServerAliveInterval", "30")
+                        session?.setConfig("ServerAliveCountMax", "5")
                     }
 
                     override fun createDefaultJSch(fs: FS?): JSch {
@@ -133,77 +178,95 @@ class GitManager(private val context: Context) {
         val lock = repoLocks.computeIfAbsent(config.id) { Any() }
         synchronized(lock) {
             val targetDir = File(config.localPath)
-            if (!targetDir.exists()) {
-                targetDir.mkdirs()
-            } else {
-                cleanupStaleLocks(config.localPath)
-                // Clean directory if it contains leftovers from a failed previous clone
-                if (targetDir.listFiles()?.isNotEmpty() == true) {
-                    targetDir.listFiles()?.forEach { it.deleteRecursively() }
-                }
-            }
+            val maxRetries = 3
+            var lastResult: SyncResult? = null
 
-            resetJGitInflaterCache()
-
-            val monitor = object : ProgressMonitor {
-                private var totalTasks = 0
-                private var currentWork = 0
-                private var totalWork = 0
-
-                override fun start(totalTasks: Int) {
-                    this.totalTasks = totalTasks
+            for (attempt in 1..maxRetries) {
+                if (!targetDir.exists()) {
+                    targetDir.mkdirs()
+                } else {
+                    cleanupStaleLocks(config.localPath)
+                    // Clean directory if it contains leftovers from a failed previous clone
+                    if (targetDir.listFiles()?.isNotEmpty() == true) {
+                        targetDir.listFiles()?.forEach { it.deleteRecursively() }
+                    }
                 }
 
-                override fun beginTask(title: String?, totalWork: Int) {
-                    this.totalWork = totalWork
-                    this.currentWork = 0
-                    progressListener?.invoke(title ?: "Cloning...", 0)
+                resetJGitInflaterCache()
+
+                if (attempt > 1) {
+                    progressListener?.invoke("Wiederhole Klonversuch ($attempt/$maxRetries) nach Netzwerkunterbrechung...", 5)
+                    try { Thread.sleep(2000L * (attempt - 1)) } catch (_: Throwable) {}
                 }
 
-                override fun update(completed: Int) {
-                    currentWork += completed
-                    val pct = if (totalWork > 0) (currentWork * 100) / totalWork else 0
-                    progressListener?.invoke("Downloading: $pct%", pct)
+                val monitor = object : ProgressMonitor {
+                    private var totalTasks = 0
+                    private var currentWork = 0
+                    private var totalWork = 0
+
+                    override fun start(totalTasks: Int) {
+                        this.totalTasks = totalTasks
+                    }
+
+                    override fun beginTask(title: String?, totalWork: Int) {
+                        this.totalWork = totalWork
+                        this.currentWork = 0
+                        progressListener?.invoke(title ?: "Cloning...", 0)
+                    }
+
+                    override fun update(completed: Int) {
+                        currentWork += completed
+                        val pct = if (totalWork > 0) (currentWork * 100) / totalWork else 0
+                        progressListener?.invoke("Downloading: $pct%", pct)
+                    }
+
+                    override fun endTask() {}
+                    override fun isCancelled(): Boolean = false
+                    override fun showDuration(enabled: Boolean) {}
                 }
 
-                override fun endTask() {}
-                override fun isCancelled(): Boolean = false
-                override fun showDuration(enabled: Boolean) {}
-            }
-
-            return try {
-                val targetBranch = config.branch.ifBlank { "main" }
-                val cloneCommand = Git.cloneRepository()
-                    .setURI(config.remoteUrl)
-                    .setDirectory(targetDir)
-                    .setBranch(targetBranch)
-                    .setTimeout(300)
-                    .setProgressMonitor(monitor)
-
-                if (config.shallowClone) {
-                    cloneCommand.setDepth(1)
-                }
-
-                getCredentialsProvider(config)?.let { cloneCommand.setCredentialsProvider(it) }
-                cloneCommand.setTransportConfigCallback(getTransportConfigCallback(config))
-
-                val git = cloneCommand.call()
                 try {
-                    val gitConfig = git.repository.config
-                    gitConfig.setBoolean("core", null, "ignorecase", true)
-                    gitConfig.save()
+                    val targetBranch = config.branch.ifBlank { "main" }
+                    val cloneCommand = Git.cloneRepository()
+                        .setURI(config.remoteUrl)
+                        .setDirectory(targetDir)
+                        .setBranch(targetBranch)
+                        .setTimeout(300)
+                        .setProgressMonitor(monitor)
+
+                    if (config.shallowClone) {
+                        cloneCommand.setDepth(1)
+                    }
+
+                    getCredentialsProvider(config)?.let { cloneCommand.setCredentialsProvider(it) }
+                    cloneCommand.setTransportConfigCallback(getTransportConfigCallback(config))
+
+                    val git = cloneCommand.call()
+                    try {
+                        val gitConfig = git.repository.config
+                        gitConfig.setBoolean("core", null, "ignorecase", true)
+                        gitConfig.setInt("http", null, "postBuffer", 32 * 1024 * 1024)
+                        gitConfig.save()
+                    } catch (e: Throwable) {
+                        e.printStackTrace()
+                    }
+                    git.close()
+                    return SyncResult(success = true, message = "Clone completed successfully")
+                } catch (e: OutOfMemoryError) {
+                    targetDir.listFiles()?.forEach { it.deleteRecursively() }
+                    return SyncResult(success = false, message = "Speichermangel (OOM): Repository enthält große Dateien/Verlauf. Bitte Shallow-Clone aktivieren.")
                 } catch (e: Throwable) {
-                    e.printStackTrace()
+                    targetDir.listFiles()?.forEach { it.deleteRecursively() }
+                    val isRetryable = isTransientNetworkError(e)
+                    val errorMsg = e.localizedMessage ?: e.javaClass.simpleName
+                    lastResult = SyncResult(success = false, message = "Clone failed: $errorMsg")
+                    if (!isRetryable || attempt == maxRetries) {
+                        return lastResult
+                    }
                 }
-                git.close()
-                SyncResult(success = true, message = "Clone completed successfully")
-            } catch (e: OutOfMemoryError) {
-                targetDir.listFiles()?.forEach { it.deleteRecursively() }
-                SyncResult(success = false, message = "Speichermangel (OOM): Repository enthält große Dateien/Verlauf. Bitte Shallow-Clone aktivieren.")
-            } catch (e: Throwable) {
-                targetDir.listFiles()?.forEach { it.deleteRecursively() }
-                SyncResult(success = false, message = "Clone failed: ${e.localizedMessage ?: e.javaClass.simpleName}")
             }
+
+            return lastResult ?: SyncResult(success = false, message = "Clone failed")
         }
     }
 
@@ -255,26 +318,37 @@ class GitManager(private val context: Context) {
     ): SyncResult {
         val lock = repoLocks.computeIfAbsent(config.id) { Any() }
         synchronized(lock) {
-            cleanupStaleLocks(config.localPath)
-            var result = performSync(config, progressListener)
+            val maxRetries = 3
+            var result: SyncResult? = null
 
-            // Auto-recovery if "Inflater has been closed" occurs
-            if (!result.success && result.message.contains("Inflater has been closed", ignoreCase = true)) {
-                progressListener?.invoke("Zlib Inflater-Bereinigung & Selbstreparatur...", 30)
-                resetJGitInflaterCache()
+            for (attempt in 1..maxRetries) {
                 cleanupStaleLocks(config.localPath)
+                if (attempt > 1) {
+                    progressListener?.invoke("Wiederhole Synchronisation ($attempt/$maxRetries)...", 10)
+                    try { Thread.sleep(2000L * (attempt - 1)) } catch (_: Throwable) {}
+                }
+
                 result = performSync(config, progressListener)
+
+                // Auto-recovery if "Inflater has been closed" occurs
+                if (!result.success && result.message.contains("Inflater has been closed", ignoreCase = true)) {
+                    progressListener?.invoke("Zlib Inflater-Bereinigung & Selbstreparatur...", 30)
+                    resetJGitInflaterCache()
+                    cleanupStaleLocks(config.localPath)
+                    result = performSync(config, progressListener)
+                }
+
                 if (result.success) {
-                    return SyncResult(
-                        success = true,
-                        message = "Erfolgreich synchronisiert (nach automatischer Cache-Bereinigung)",
-                        commitsPulled = result.commitsPulled,
-                        commitsPushed = result.commitsPushed
-                    )
+                    return result
+                }
+
+                val isNetworkError = isTransientNetworkErrorMsg(result.message)
+                if (!isNetworkError || attempt == maxRetries) {
+                    return result
                 }
             }
 
-            return result
+            return result ?: SyncResult(success = false, message = "Sync fehlgeschlagen")
         }
     }
 
@@ -346,6 +420,7 @@ class GitManager(private val context: Context) {
                     gitConfig.setString("branch", targetBranch, "merge", "refs/heads/$targetBranch")
                 }
                 gitConfig.setBoolean("core", null, "ignorecase", true)
+                gitConfig.setInt("http", null, "postBuffer", 32 * 1024 * 1024)
                 gitConfig.save()
             } catch (e: Throwable) {
                 e.printStackTrace()

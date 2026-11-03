@@ -6,6 +6,11 @@ und dieses Projekt hält sich an [Semantic Versioning](https://semver.org/lang/d
 
 ---
 
+## [1.2.2] - 2026-11-03
+
+### Geändert / Hinzugefügt
+- Behebung von 'Software caused connection abort' durch Deaktivierung von Keep-Alive & automatische Retries bei Netzwerkunterbrechungen, sowie Absicherung gegen Ueberschreiben des Basis-Verzeichnisses
+
 ## [1.2.1] - 2026-10-27
 
 ### Geändert / Hinzugefügt
