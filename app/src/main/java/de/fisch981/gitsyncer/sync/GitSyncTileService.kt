@@ -4,6 +4,7 @@ import android.os.Build
 import android.service.quicksettings.Tile
 import android.service.quicksettings.TileService
 import androidx.annotation.RequiresApi
+import de.fisch981.gitsyncer.R
 
 @RequiresApi(Build.VERSION_CODES.N)
 class GitSyncTileService : TileService() {
@@ -12,7 +13,7 @@ class GitSyncTileService : TileService() {
         super.onStartListening()
         val tile = qsTile ?: return
         tile.state = Tile.STATE_INACTIVE
-        tile.label = "Sync All Repos"
+        tile.label = getString(R.string.quick_settings_tile_label)
         tile.updateTile()
     }
 
@@ -20,7 +21,7 @@ class GitSyncTileService : TileService() {
         super.onClick()
         val tile = qsTile ?: return
         tile.state = Tile.STATE_ACTIVE
-        tile.label = "Syncing..."
+        tile.label = "Synchronisiert..."
         tile.updateTile()
 
         SyncScheduler.triggerOneShotSync(applicationContext)
@@ -28,7 +29,7 @@ class GitSyncTileService : TileService() {
         android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
             val currentTile = qsTile ?: return@postDelayed
             currentTile.state = Tile.STATE_INACTIVE
-            currentTile.label = "Sync All Repos"
+            currentTile.label = getString(R.string.quick_settings_tile_label)
             currentTile.updateTile()
         }, 2000)
     }

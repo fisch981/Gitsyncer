@@ -48,7 +48,11 @@ object SyncScheduler {
             .setRequiredNetworkType(NetworkType.CONNECTED)
             .build()
 
-        val data = if (repoId != null) workDataOf("repo_id" to repoId) else workDataOf()
+        val data = if (repoId != null) {
+            workDataOf("repo_id" to repoId, "manual_trigger" to true)
+        } else {
+            workDataOf("manual_trigger" to true)
+        }
 
         val oneShot = OneTimeWorkRequestBuilder<GitSyncWorker>()
             .setConstraints(constraints)

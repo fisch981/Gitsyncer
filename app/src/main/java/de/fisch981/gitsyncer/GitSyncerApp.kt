@@ -10,10 +10,6 @@ class GitSyncerApp : Application() {
     override fun onCreate() {
         super.onCreate()
 
-        // Deaktiviere HTTP Keep-Alive auf Android: Verhindert "Software caused connection abort: recv failed"
-        // durch veraltete Verbindungs-Pools im mobilen Netz (5G/LTE Carrier NATs)
-        System.setProperty("http.keepAlive", "false")
-
         // JGit Optimierung für Android:
         // isPackedGitUseStrongRefs = true verhindert GC-Finalisierung von Inflaters während des Entpackens ("Inflater has been closed")
         try {

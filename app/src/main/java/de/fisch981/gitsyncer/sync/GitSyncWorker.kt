@@ -29,11 +29,17 @@ class GitSyncWorker(
 
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
         val targetRepoId = inputData.getString("repo_id")
+        val isManual = inputData.getBoolean("manual_trigger", targetRepoId == null)
         val reposToSync = if (targetRepoId != null) {
             val r = repoStore.getRepository(targetRepoId)
             if (r != null && r.isEnabled) listOf(r) else emptyList()
         } else {
-            repoStore.repositories.value.filter { it.isEnabled && it.autoSyncEnabled }
+            // Bei manuellem Start (z.B. Schnellzugriffsleiste/One-Shot): ALLE aktiven (isEnabled) Repos syncen
+            if (isManual) {
+                repoStore.repositories.value.filter { it.isEnabled }.sortedBy { it.name.lowercase() }
+            } else {
+                repoStore.repositories.value.filter { it.isEnabled && it.autoSyncEnabled }.sortedBy { it.name.lowercase() }
+            }
         }
 
         if (reposToSync.isEmpty()) {

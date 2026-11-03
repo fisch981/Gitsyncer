@@ -6,6 +6,11 @@ und dieses Projekt hält sich an [Semantic Versioning](https://semver.org/lang/d
 
 ---
 
+## [1.2.6] - 2026-11-03
+
+### Geändert / Hinzugefügt
+- Schnellzugriffsleisten-Sync synchronisiert nun alle aktiven Repositories (auch wenn automatischer Hintergrund-Sync deaktiviert ist)
+
 ## [1.2.5] - 2026-11-03
 
 ### Geändert / Hinzugefügt
