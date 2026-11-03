@@ -51,6 +51,8 @@ fun DashboardScreen(
     val repositories by repoStore.repositories.collectAsState()
 
     var isSyncingAll by remember { mutableStateOf(false) }
+    var syncAllJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
+    val activeSyncJobs = remember { mutableStateMapOf<String, kotlinx.coroutines.Job>() }
 
     // Check storage permission
     val hasStoragePermission = remember {
@@ -81,13 +83,28 @@ fun DashboardScreen(
                 actions = {
                     IconButton(
                         onClick = {
+                            if (isSyncingAll) {
+                                syncAllJob?.cancel()
+                                syncAllJob = null
+                                isSyncingAll = false
+                                repositories.forEach {
+                                    GitManager.cancelSync(it.id)
+                                    GitManager.cleanupStaleLocks(it.localPath)
+                                    if (it.lastSyncStatus == "RUNNING") {
+                                        repoStore.updateRepoSyncStatus(it.id, "CANCELLED", "Sammel-Sync abgebrochen")
+                                    }
+                                }
+                                Toast.makeText(context, "Sammel-Sync abgebrochen", Toast.LENGTH_SHORT).show()
+                                return@IconButton
+                            }
+
                             val activeRepos = repositories.filter { it.isEnabled }
                             if (activeRepos.isEmpty()) {
                                 Toast.makeText(context, "Keine aktiven Repositories vorhanden.", Toast.LENGTH_SHORT).show()
                                 return@IconButton
                             }
                             isSyncingAll = true
-                            coroutineScope.launch {
+                            syncAllJob = coroutineScope.launch {
                                 for (repo in activeRepos) {
                                     repoStore.updateRepoSyncStatus(repo.id, "RUNNING")
                                     val res = withContext(Dispatchers.IO) {
@@ -96,18 +113,19 @@ fun DashboardScreen(
                                     if (res.success) {
                                         repoStore.updateRepoSyncStatus(repo.id, "SUCCESS")
                                     } else {
-                                        val status = if (res.conflicts.isNotEmpty()) "CONFLICT" else "FAILED"
+                                        val status = if (res.conflicts.isNotEmpty()) "CONFLICT" else if (res.message.contains("abgebrochen", ignoreCase = true)) "CANCELLED" else "FAILED"
                                         repoStore.updateRepoSyncStatus(repo.id, status, res.message)
                                     }
                                 }
                                 isSyncingAll = false
+                                syncAllJob = null
                                 Toast.makeText(context, "${activeRepos.size} Repositories synchronisiert!", Toast.LENGTH_SHORT).show()
                             }
                         },
-                        enabled = !isSyncingAll && repositories.any { it.isEnabled }
+                        enabled = repositories.any { it.isEnabled }
                     ) {
                         if (isSyncingAll) {
-                            CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                            Icon(Icons.Default.Stop, contentDescription = "Sammel-Sync abbrechen", tint = MaterialTheme.colorScheme.error)
                         } else {
                             Icon(Icons.Default.Sync, contentDescription = "Aktive Repositories synchronisieren")
                         }
@@ -237,20 +255,30 @@ fun DashboardScreen(
                                 Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
                             },
                             onSync = {
-                                coroutineScope.launch {
+                                val job = coroutineScope.launch {
                                     repoStore.updateRepoSyncStatus(repo.id, "RUNNING")
                                     val res = withContext(Dispatchers.IO) {
                                         gitManager.sync(repo)
                                     }
+                                    activeSyncJobs.remove(repo.id)
                                     if (res.success) {
                                         repoStore.updateRepoSyncStatus(repo.id, "SUCCESS")
                                         Toast.makeText(context, "${repo.name}: Synchronisiert!", Toast.LENGTH_SHORT).show()
                                     } else {
-                                        val status = if (res.conflicts.isNotEmpty()) "CONFLICT" else "FAILED"
+                                        val status = if (res.conflicts.isNotEmpty()) "CONFLICT" else if (res.message.contains("abgebrochen", ignoreCase = true)) "CANCELLED" else "FAILED"
                                         repoStore.updateRepoSyncStatus(repo.id, status, res.message)
                                         Toast.makeText(context, "${repo.name}: ${res.message}", Toast.LENGTH_LONG).show()
                                     }
                                 }
+                                activeSyncJobs[repo.id] = job
+                            },
+                            onCancel = {
+                                GitManager.cancelSync(repo.id)
+                                activeSyncJobs[repo.id]?.cancel()
+                                activeSyncJobs.remove(repo.id)
+                                GitManager.cleanupStaleLocks(repo.localPath)
+                                repoStore.updateRepoSyncStatus(repo.id, "CANCELLED", "Synchronisation durch Benutzer abgebrochen")
+                                Toast.makeText(context, "${repo.name}: Synchronisation abgebrochen", Toast.LENGTH_SHORT).show()
                             }
                         )
                     }
@@ -266,7 +294,8 @@ fun RepositoryCard(
     onOpen: () -> Unit,
     onEdit: () -> Unit,
     onToggleEnabled: () -> Unit,
-    onSync: () -> Unit
+    onSync: () -> Unit,
+    onCancel: () -> Unit
 ) {
     Card(
         modifier = Modifier
@@ -342,6 +371,7 @@ fun RepositoryCard(
                     "SUCCESS" -> Triple(GitGreen, "Synchronisiert", Icons.Default.CheckCircle)
                     "RUNNING" -> Triple(MaterialTheme.colorScheme.primary, "Synchronisiert...", Icons.Default.Sync)
                     "CONFLICT" -> Triple(GitRed, "Merge-Konflikt", Icons.Default.Warning)
+                    "CANCELLED" -> Triple(MaterialTheme.colorScheme.error, "Abgebrochen", Icons.Default.Cancel)
                     "FAILED" -> Triple(GitRed, "Fehler", Icons.Default.Error)
                     else -> Triple(MaterialTheme.colorScheme.onSurfaceVariant, "Bereit", Icons.Default.CloudQueue)
                 }
@@ -396,14 +426,26 @@ fun RepositoryCard(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(
-                        onClick = onSync,
-                        enabled = repo.isEnabled,
-                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
-                    ) {
-                        Icon(Icons.Default.Sync, contentDescription = null, modifier = Modifier.size(16.dp))
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text("Sync Jetzt")
+                    if (repo.lastSyncStatus == "RUNNING") {
+                        OutlinedButton(
+                            onClick = onCancel,
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                        ) {
+                            CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.error)
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Abbrechen")
+                        }
+                    } else {
+                        Button(
+                            onClick = onSync,
+                            enabled = repo.isEnabled,
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                        ) {
+                            Icon(Icons.Default.Sync, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Sync Jetzt")
+                        }
                     }
 
                     OutlinedButton(

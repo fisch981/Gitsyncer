@@ -54,6 +54,7 @@ fun RepoDetailScreen(
     var changes by remember { mutableStateOf<List<FileChange>>(emptyList()) }
     var commits by remember { mutableStateOf<List<CommitInfo>>(emptyList()) }
     var isLoading by remember { mutableStateOf(false) }
+    var activeSyncJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
     var commitMessage by remember { mutableStateOf("") }
 
     // Diff Dialog state
@@ -118,28 +119,46 @@ fun RepoDetailScreen(
                             tint = if (repo.isEnabled) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.primary
                         )
                     }
-                    IconButton(
-                        onClick = {
-                            coroutineScope.launch {
-                                isLoading = true
-                                repoStore.updateRepoSyncStatus(repo.id, "RUNNING")
-                                val result = withContext(Dispatchers.IO) {
-                                    gitManager.sync(repo)
-                                }
+                    if (isLoading || repo.lastSyncStatus == "RUNNING") {
+                        IconButton(
+                            onClick = {
+                                activeSyncJob?.cancel()
+                                activeSyncJob = null
+                                GitManager.cancelSync(repo.id)
+                                GitManager.cleanupStaleLocks(repo.localPath)
                                 isLoading = false
-                                if (result.success) {
-                                    repoStore.updateRepoSyncStatus(repo.id, "SUCCESS")
-                                    Toast.makeText(context, "Erfolgreich synchronisiert!", Toast.LENGTH_SHORT).show()
-                                } else {
-                                    val status = if (result.conflicts.isNotEmpty()) "CONFLICT" else "FAILED"
-                                    repoStore.updateRepoSyncStatus(repo.id, status, result.message)
-                                    Toast.makeText(context, "Fehler: ${result.message}", Toast.LENGTH_LONG).show()
-                                }
+                                repoStore.updateRepoSyncStatus(repo.id, "CANCELLED", "Synchronisation durch Benutzer abgebrochen")
+                                Toast.makeText(context, "Synchronisation abgebrochen", Toast.LENGTH_SHORT).show()
                                 refreshData()
                             }
+                        ) {
+                            Icon(Icons.Default.Close, contentDescription = "Synchronisation abbrechen", tint = MaterialTheme.colorScheme.error)
                         }
-                    ) {
-                        Icon(Icons.Default.Sync, contentDescription = "Synchronisieren")
+                    } else {
+                        IconButton(
+                            onClick = {
+                                activeSyncJob = coroutineScope.launch {
+                                    isLoading = true
+                                    repoStore.updateRepoSyncStatus(repo.id, "RUNNING")
+                                    val result = withContext(Dispatchers.IO) {
+                                        gitManager.sync(repo)
+                                    }
+                                    isLoading = false
+                                    activeSyncJob = null
+                                    if (result.success) {
+                                        repoStore.updateRepoSyncStatus(repo.id, "SUCCESS")
+                                        Toast.makeText(context, "Erfolgreich synchronisiert!", Toast.LENGTH_SHORT).show()
+                                    } else {
+                                        val status = if (result.conflicts.isNotEmpty()) "CONFLICT" else if (result.message.contains("abgebrochen", ignoreCase = true)) "CANCELLED" else "FAILED"
+                                        repoStore.updateRepoSyncStatus(repo.id, status, result.message)
+                                        Toast.makeText(context, "Hinweis: ${result.message}", Toast.LENGTH_LONG).show()
+                                    }
+                                    refreshData()
+                                }
+                            }
+                        ) {
+                            Icon(Icons.Default.Sync, contentDescription = "Synchronisieren")
+                        }
                     }
                     IconButton(onClick = onEditRepo) {
                         Icon(Icons.Default.Settings, contentDescription = "Einstellungen")

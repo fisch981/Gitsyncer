@@ -6,6 +6,11 @@ und dieses Projekt hält sich an [Semantic Versioning](https://semver.org/lang/d
 
 ---
 
+## [1.2.3] - 2026-11-03
+
+### Geändert / Hinzugefügt
+- Abbrechen-Funktion fuer laufende/haengende Synchronisationen hinzugefuegt und JGit-CanceledException Support implementiert
+
 ## [1.2.2] - 2026-11-03
 
 ### Geändert / Hinzugefügt

@@ -68,6 +68,11 @@ class GitManager(private val context: Context) {
 
     companion object {
         private val repoLocks = ConcurrentHashMap<String, Any>()
+        private val cancelFlags = ConcurrentHashMap<String, java.util.concurrent.atomic.AtomicBoolean>()
+
+        fun cancelSync(repoId: String) {
+            cancelFlags[repoId]?.set(true)
+        }
 
         fun cleanupStaleLocks(localPath: String) {
             try {
@@ -194,6 +199,9 @@ class GitManager(private val context: Context) {
 
                 resetJGitInflaterCache()
 
+                val cancelFlag = cancelFlags.computeIfAbsent(config.id) { java.util.concurrent.atomic.AtomicBoolean(false) }
+                cancelFlag.set(false)
+
                 if (attempt > 1) {
                     progressListener?.invoke("Wiederhole Klonversuch ($attempt/$maxRetries) nach Netzwerkunterbrechung...", 5)
                     try { Thread.sleep(2000L * (attempt - 1)) } catch (_: Throwable) {}
@@ -221,7 +229,7 @@ class GitManager(private val context: Context) {
                     }
 
                     override fun endTask() {}
-                    override fun isCancelled(): Boolean = false
+                    override fun isCancelled(): Boolean = cancelFlag.get()
                     override fun showDuration(enabled: Boolean) {}
                 }
 
@@ -252,6 +260,9 @@ class GitManager(private val context: Context) {
                     }
                     git.close()
                     return SyncResult(success = true, message = "Clone completed successfully")
+                } catch (e: org.eclipse.jgit.api.errors.CanceledException) {
+                    targetDir.listFiles()?.forEach { it.deleteRecursively() }
+                    return SyncResult(success = false, message = "Klon-Vorgang durch Benutzer abgebrochen")
                 } catch (e: OutOfMemoryError) {
                     targetDir.listFiles()?.forEach { it.deleteRecursively() }
                     return SyncResult(success = false, message = "Speichermangel (OOM): Repository enthält große Dateien/Verlauf. Bitte Shallow-Clone aktivieren.")
@@ -474,10 +485,23 @@ class GitManager(private val context: Context) {
             // 2. Fetch and Pull from remote
             if (config.syncDirection != SyncDirection.PUSH_ONLY) {
                 progressListener?.invoke("Pulling from remote...", 65)
+                val cancelFlag = cancelFlags.computeIfAbsent(config.id) { java.util.concurrent.atomic.AtomicBoolean(false) }
+                val monitor = object : ProgressMonitor {
+                    override fun start(totalTasks: Int) {}
+                    override fun beginTask(title: String?, totalWork: Int) {
+                        progressListener?.invoke(title ?: "Pulling...", 0)
+                    }
+                    override fun update(completed: Int) {}
+                    override fun endTask() {}
+                    override fun isCancelled(): Boolean = cancelFlag.get()
+                    override fun showDuration(enabled: Boolean) {}
+                }
+
                 val pullCmd = git.pull()
                     .setRemote("origin")
                     .setRemoteBranchName(targetBranch)
                     .setTimeout(300)
+                    .setProgressMonitor(monitor)
                 creds?.let { pullCmd.setCredentialsProvider(it) }
                 pullCmd.setTransportConfigCallback(transportCallback)
 
@@ -506,10 +530,23 @@ class GitManager(private val context: Context) {
             // 3. Push to remote
             if (config.syncDirection != SyncDirection.PULL_ONLY) {
                 progressListener?.invoke("Pushing commits to remote...", 85)
+                val cancelFlag = cancelFlags.computeIfAbsent(config.id) { java.util.concurrent.atomic.AtomicBoolean(false) }
+                val monitor = object : ProgressMonitor {
+                    override fun start(totalTasks: Int) {}
+                    override fun beginTask(title: String?, totalWork: Int) {
+                        progressListener?.invoke(title ?: "Pushing...", 0)
+                    }
+                    override fun update(completed: Int) {}
+                    override fun endTask() {}
+                    override fun isCancelled(): Boolean = cancelFlag.get()
+                    override fun showDuration(enabled: Boolean) {}
+                }
+
                 val pushCmd = git.push()
                     .setRemote("origin")
                     .setRefSpecs(RefSpec("refs/heads/$targetBranch:refs/heads/$targetBranch"))
                     .setTimeout(300)
+                    .setProgressMonitor(monitor)
                 creds?.let { pushCmd.setCredentialsProvider(it) }
                 pushCmd.setTransportConfigCallback(transportCallback)
                 val pushResults = pushCmd.call()
@@ -551,6 +588,8 @@ class GitManager(private val context: Context) {
                 commitsPulled = commitsPulled,
                 commitsPushed = commitsPushed
             )
+        } catch (e: org.eclipse.jgit.api.errors.CanceledException) {
+            SyncResult(success = false, message = "Synchronisation durch Benutzer abgebrochen")
         } catch (e: org.eclipse.jgit.api.errors.RefNotAdvertisedException) {
             // Self-repair: If remote rejected due to wrong ref (like master), perform clean reclone
             progressListener?.invoke("Bereinige lokale Branch-Referenz und klone neu...", 10)
