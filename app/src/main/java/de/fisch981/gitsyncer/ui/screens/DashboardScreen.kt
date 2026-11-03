@@ -49,6 +49,12 @@ fun DashboardScreen(
     val repoStore = remember { RepositoryStore.getInstance(context) }
     val gitManager = remember { GitManager(context) }
     val repositories by repoStore.repositories.collectAsState()
+    val sortedRepositories = remember(repositories) {
+        repositories.sortedWith(
+            compareByDescending<GitRepositoryConfig> { it.isEnabled }
+                .thenBy { it.name.lowercase() }
+        )
+    }
 
     var isSyncingAll by remember { mutableStateOf(false) }
     var syncAllJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
@@ -97,7 +103,7 @@ fun DashboardScreen(
                                 return@IconButton
                             }
 
-                            val activeRepos = repositories.filter { it.isEnabled }
+                            val activeRepos = repositories.filter { it.isEnabled }.sortedBy { it.name.lowercase() }
                             if (activeRepos.isEmpty()) {
                                 Toast.makeText(context, "Keine aktiven Repositories vorhanden.", Toast.LENGTH_SHORT).show()
                                 return@IconButton
@@ -249,7 +255,7 @@ fun DashboardScreen(
                         .padding(horizontal = 16.dp, vertical = 8.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    items(repositories, key = { it.id }) { repo ->
+                    items(sortedRepositories, key = { it.id }) { repo ->
                         RepositoryCard(
                             repo = repo,
                             onOpen = { onOpenRepo(repo.id) },

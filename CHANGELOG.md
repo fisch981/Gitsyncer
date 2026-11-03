@@ -6,6 +6,11 @@ und dieses Projekt hält sich an [Semantic Versioning](https://semver.org/lang/d
 
 ---
 
+## [1.2.5] - 2026-11-03
+
+### Geändert / Hinzugefügt
+- Sortierung der Repository-Liste: Aktive Repositories stehen oben und sind alphabetisch sortiert (pausierte Repositories folgen darunter alphabetisch)
+
 ## [1.2.4] - 2026-11-03
 
 ### Geändert / Hinzugefügt

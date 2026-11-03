@@ -74,7 +74,10 @@ class RepositoryStore(private val context: Context) {
         } else {
             emptyList()
         }
-        _repositories.value = list
+        _repositories.value = list.sortedWith(
+            compareByDescending<GitRepositoryConfig> { it.isEnabled }
+                .thenBy { it.name.lowercase() }
+        )
     }
 
     @Synchronized
@@ -102,8 +105,12 @@ class RepositoryStore(private val context: Context) {
         } else {
             current.add(repo)
         }
-        _repositories.value = current
-        prefs.edit().putString(KEY_REPOSITORIES, gson.toJson(current)).apply()
+        val sorted = current.sortedWith(
+            compareByDescending<GitRepositoryConfig> { it.isEnabled }
+                .thenBy { it.name.lowercase() }
+        )
+        _repositories.value = sorted
+        prefs.edit().putString(KEY_REPOSITORIES, gson.toJson(sorted)).apply()
     }
 
     @Synchronized
@@ -122,8 +129,12 @@ class RepositoryStore(private val context: Context) {
                 lastErrorMessage = errorMessage
             )
             current[index] = updated
-            _repositories.value = current
-            prefs.edit().putString(KEY_REPOSITORIES, gson.toJson(current)).apply()
+            val sorted = current.sortedWith(
+                compareByDescending<GitRepositoryConfig> { it.isEnabled }
+                    .thenBy { it.name.lowercase() }
+            )
+            _repositories.value = sorted
+            prefs.edit().putString(KEY_REPOSITORIES, gson.toJson(sorted)).apply()
         }
     }
 
@@ -131,8 +142,12 @@ class RepositoryStore(private val context: Context) {
     fun deleteRepository(repoId: String) {
         val current = _repositories.value.toMutableList()
         current.removeAll { it.id == repoId }
-        _repositories.value = current
-        prefs.edit().putString(KEY_REPOSITORIES, gson.toJson(current)).apply()
+        val sorted = current.sortedWith(
+            compareByDescending<GitRepositoryConfig> { it.isEnabled }
+                .thenBy { it.name.lowercase() }
+        )
+        _repositories.value = sorted
+        prefs.edit().putString(KEY_REPOSITORIES, gson.toJson(sorted)).apply()
     }
 
     @Synchronized
@@ -143,8 +158,12 @@ class RepositoryStore(private val context: Context) {
             val newState = !current[index].isEnabled
             val updated = current[index].copy(isEnabled = newState)
             current[index] = updated
-            _repositories.value = current
-            prefs.edit().putString(KEY_REPOSITORIES, gson.toJson(current)).apply()
+            val sorted = current.sortedWith(
+                compareByDescending<GitRepositoryConfig> { it.isEnabled }
+                    .thenBy { it.name.lowercase() }
+            )
+            _repositories.value = sorted
+            prefs.edit().putString(KEY_REPOSITORIES, gson.toJson(sorted)).apply()
             SyncScheduler.scheduleRepo(context, updated)
             return newState
         }
@@ -158,8 +177,12 @@ class RepositoryStore(private val context: Context) {
         if (index >= 0) {
             val updated = current[index].copy(isEnabled = enabled)
             current[index] = updated
-            _repositories.value = current
-            prefs.edit().putString(KEY_REPOSITORIES, gson.toJson(current)).apply()
+            val sorted = current.sortedWith(
+                compareByDescending<GitRepositoryConfig> { it.isEnabled }
+                    .thenBy { it.name.lowercase() }
+            )
+            _repositories.value = sorted
+            prefs.edit().putString(KEY_REPOSITORIES, gson.toJson(sorted)).apply()
             SyncScheduler.scheduleRepo(context, updated)
         }
     }
