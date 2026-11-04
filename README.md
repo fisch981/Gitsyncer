@@ -22,6 +22,8 @@ Im Gegensatz zu herkömmlichen Apps aus dem Store sind in GitSyncer **alle Funkt
 - **Hohe Stabilität & Selbstreparatur:**
   - Optimierter JGit `WindowCache` mit Strong References gegen GC-Abstürze (`Inflater has been closed`).
   - Thread-sichere Operationen pro Repository.
+  - Sofortiger Abbruch laufender oder hängender Synchronisationen (`JGit-CanceledException` Support).
+  - Robuste Socket- und Verbindungsbehandlung (Deaktivierung fehlerhafter `Connection: close`-Header für stabile Git-Packfile-Übertragungen großer Repositories, Timeout-Optimierung und automatische Retries).
   - Automatische Bereinigung verwaister `.lock`-Dateien (`index.lock`) und unvollständiger Merges.
   - Manueller Reset-Button zum sauberen Neuklonen bei Bedarf.
 - **Authentifizierung:**
@@ -31,7 +33,10 @@ Im Gegensatz zu herkömmlichen Apps aus dem Store sind in GitSyncer **alle Funkt
   - Zuverlässige Hintergrund-Synchronisation via Android `WorkManager` (15m, 30m, 1h, 6h, 12h, 24h).
   - Akkuschonend & netzwerküberwacht.
 - **Quick Settings Kachel (Android Statusleiste):**
-  - Schnelle Synchronisation aller Repositories mit einem Klick direkt aus den Android-Schnelleinstellungen.
+  - Schnelle Synchronisation aller aktiven Repositories mit einem Klick direkt aus den Android-Schnelleinstellungen (funktioniert auch, wenn automatischer Hintergrund-Sync pausiert ist).
+- **Intelligente Repository-Verwaltung:**
+  - Übersichtliche Sortierung: Aktive Repositories stehen oben und sind alphabetisch sortiert; pausierte Repositories folgen darunter getrennt.
+  - Einzelne Repositories können pausiert oder wieder aktiviert werden.
 - **Obsidian & Gerätespeicher-Kompatibilität:**
   - Vollständiger Dateizugriff auf interne Verzeichnisse (`/sdcard/Documents/...`) für Obsidian-Tresore.
 - **Modernes Material 3 UI:**
