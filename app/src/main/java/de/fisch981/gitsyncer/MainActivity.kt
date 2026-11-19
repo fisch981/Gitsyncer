@@ -56,12 +56,12 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-fun GitSyncerNavigation() {
+fun GitSyncerNavigation(startDestination: String = "dashboard") {
     val navController = rememberNavController()
 
     NavHost(
         navController = navController,
-        startDestination = "dashboard"
+        startDestination = startDestination
     ) {
         composable("dashboard") {
             DashboardScreen(
