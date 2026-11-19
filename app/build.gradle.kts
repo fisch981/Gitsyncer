@@ -12,8 +12,8 @@ android {
         applicationId = "de.fisch981.gitsyncer"
         minSdk = 26
         targetSdk = 35
-        versionCode = 14
-        versionName = "1.3.0"
+        versionCode = 15
+        versionName = "1.3.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -69,6 +69,15 @@ android {
             excludes += "META-INF/OSGI-INF/**"
         }
     }
+
+    applicationVariants.all {
+        if (buildType.name == "release") {
+            outputs.all {
+                val output = this as? com.android.build.gradle.internal.api.BaseVariantOutputImpl
+                output?.outputFileName = "Gitsyncer-release.apk"
+            }
+        }
+    }
 }
 
 dependencies {
@@ -112,18 +121,4 @@ dependencies {
 
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
-}
-
-tasks.register("copyReleaseApkToRoot") {
-    dependsOn("assembleRelease")
-    doLast {
-        val apkFile = layout.buildDirectory.file("outputs/apk/release/app-release.apk").get().asFile
-        if (apkFile.exists()) {
-            val destFile = File(rootDir, "Gitsyncer-release.apk")
-            apkFile.copyTo(destFile, overwrite = true)
-            println("Release APK kopiert nach: ${destFile.absolutePath}")
-        } else {
-            throw GradleException("Release APK nicht gefunden unter: ${apkFile.absolutePath}")
-        }
-    }
 }
