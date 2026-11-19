@@ -1,4 +1,4 @@
-param (
+﻿param (
     [string]$ChangeSummary = "Automatisches Update",
     [string]$BumpType = "patch" # patch, minor, major
 )
@@ -74,5 +74,20 @@ git commit -m "Release v${newName}: $ChangeSummary"
 
 Write-Host "==> Pushe nach GitHub (origin main)..." -ForegroundColor Cyan
 git push origin main
+
+Write-Host "==> Veröffentliche Release-APK auf GitHub Releases (v$newName)..." -ForegroundColor Cyan
+$prevEap = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
+gh release view "v$newName" 2>$null | Out-Null
+$releaseExists = ($LASTEXITCODE -eq 0)
+$ErrorActionPreference = $prevEap
+if ($releaseExists) {
+    gh release upload "v$newName" "Gitsyncer-release.apk" --clobber
+} else {
+    gh release create "v$newName" "Gitsyncer-release.apk" --title "Gitsyncer v$newName" --notes "$ChangeSummary"
+}
+if ($LASTEXITCODE -ne 0) {
+    throw "GitHub Release Upload für v$newName fehlgeschlagen!"
+}
 
 Write-Host "==> Erfolgreich veröffentlicht & gepusht: v$newName (Code $newCode)" -ForegroundColor Green
