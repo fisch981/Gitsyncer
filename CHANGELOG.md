@@ -6,6 +6,11 @@ und dieses Projekt hält sich an [Semantic Versioning](https://semver.org/lang/d
 
 ---
 
+## [1.3.2] - 2026-11-19
+
+### Geändert / Hinzugefügt
+- Langer Druck auf das Schnellzugriffsleisten-Symbol oeffnet nun direkt die App statt der Android-Systemeinstellungen
+
 ## [1.3.1] - 2026-11-19
 
 ### Geändert / Hinzugefügt
