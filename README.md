@@ -1,56 +1,61 @@
 # GitSyncer
 
-**GitSyncer** (`de.fisch981.gitsyncer`) ist eine leistungsstarke, vollständig kostenlose Android-App zur nahtlosen Zwei-Wege-Synchronisation beliebiger lokaler Ordner (z. B. **Obsidian Vaults**, Markdown-Notizen oder Quellcode-Repositories) mit Remote-Git-Diensten wie **GitHub**, **GitLab** und **Gitea**.
-
-Im Gegensatz zu herkömmlichen Apps aus dem Store sind in GitSyncer **alle Funktionen dauerhaft kostenlos und unbegrenzt freigeschaltet**: keine Paywalls für Multi-Repository-Support, keine Limits bei Hintergrund-Synchronisationen oder Sync-Intervallen.
+**GitSyncer** (`de.fisch981.gitsyncer`) ist eine moderne, native Android-App zur nahtlosen Zwei-Wege-Synchronisation beliebiger lokaler Verzeichnisse (z. B. **Obsidian Vaults**, Markdown-Notizen oder Quellcode-Repositories) mit Git-Hostern wie **GitHub**, **GitLab** und **Gitea**. Zusätzlich bietet GitSyncer einen spezialisierten Release-APK-Modus zum direkten Beziehen und Aktualisieren von Android-Apps aus GitHub Releases.
 
 ---
 
 ## Highlights & Features
 
-- **Unbegrenzte Repositories:** Verwalte und synchronisiere beliebig viele Git-Repositories parallel auf deinem Smartphone.
-- **GitHub Account & Explorer-Integration:**
-  - **Zentrale Zugangsdaten:** Hinterlege dein GitHub-Token einmal in den Einstellungen; alle Repositories nutzen es automatisch.
-  - **1-Klick Repository-Import:** Durchsuche und importiere deine privaten & öffentlichen GitHub-Repositories direkt aus einer Live-Liste ohne manuelle Eingabe von URLs.
-  - **Automatisches Basisverzeichnis:** Lege einen Standard-Ordner fest (z. B. für Obsidian); Unterordner werden bei neuen Repos automatisch erstellt.
-- **Volle Git-Funktionalität (Eclipse JGit):**
-  - Klonen, Pull, Fetch, Push, Commit und Status-Prüfung.
-  - Erkennung ungespeicherter oder geänderter Dateien.
-  - Integrierter Diff-Viewer mit farblicher Hervorhebung hinzugefügter und entfernter Zeilen.
-  - Sichere Merge-Konflikt-Lösung ("Lokal behalten" vs. "Remote behalten").
-  - **Shallow-Clone (`depth = 1`):** Schneller Download nur des aktuellen Stands ohne unnötige Gigabyte alter Historie.
-- **Hohe Stabilität & Selbstreparatur:**
-  - Optimierter JGit `WindowCache` mit Strong References gegen GC-Abstürze (`Inflater has been closed`).
-  - Thread-sichere Operationen pro Repository.
-  - Sofortiger Abbruch laufender oder hängender Synchronisationen (`JGit-CanceledException` Support).
-  - Robuste Socket- und Verbindungsbehandlung (Deaktivierung fehlerhafter `Connection: close`-Header für stabile Git-Packfile-Übertragungen großer Repositories, Timeout-Optimierung und automatische Retries).
-  - Automatische Bereinigung verwaister `.lock`-Dateien (`index.lock`) und unvollständiger Merges.
-  - Manueller Reset-Button zum sauberen Neuklonen bei Bedarf.
-- **Authentifizierung:**
-  - **HTTPS:** Personal Access Tokens (PAT) oder Benutzername/Passwort inklusive 1-Klick-Browser-Generierung.
-  - **SSH:** Integrierter SSH-Schlüssel-Generator (RSA 2048/4096 und Ed25519) mit Ein-Klick-Kopieren des öffentlichen Schlüssels für GitHub/GitLab sowie Import bestehender Schlüssel.
-- **Hintergrund-Synchronisation:**
-  - Zuverlässige Hintergrund-Synchronisation via Android `WorkManager` (15m, 30m, 1h, 6h, 12h, 24h).
-  - Akkuschonend & netzwerküberwacht.
-- **Quick Settings Kachel (Android Statusleiste):**
-  - Schnelle Synchronisation aller aktiven Repositories mit einem Klick direkt aus den Android-Schnelleinstellungen (funktioniert auch, wenn automatischer Hintergrund-Sync pausiert ist).
-- **Intelligente Repository-Verwaltung:**
-  - Übersichtliche Sortierung: Aktive Repositories stehen oben und sind alphabetisch sortiert; pausierte Repositories folgen darunter getrennt.
-  - Einzelne Repositories können pausiert oder wieder aktiviert werden.
-- **Obsidian & Gerätespeicher-Kompatibilität:**
-  - Vollständiger Dateizugriff auf interne Verzeichnisse (`/sdcard/Documents/...`) für Obsidian-Tresore.
-- **Modernes Material 3 UI:**
-  - Modernes, klares Interface mit Jetpack Compose, Dynamic Colors und Dark Mode.
+### 📦 Neu: Release-APK-Download-Modus (ab v1.3.0)
+- **Gezielter APK-Download:** Repositories können optional so konfiguriert werden, dass statt des gesamten Git-Repositorys (Quellcode, Assets, Commit-Historie) ausschließlich die kompilierten Release-APKs aus den GitHub Releases heruntergeladen werden.
+- **Integrierter Release-Browser:** Übersicht über alle veröffentlichten Releases inklusive Versionsnummern, Release-Notes, Veröffentlichungsdatum und Dateigrößen.
+- **Direkt-Installation:** Heruntergeladene APK-Dateien können direkt aus der App heraus über den systemweiten Android PackageInstaller installiert werden (`FileProvider`).
+- **Update-Prüfung:** Schnelle Erkennung neuer Releases sowohl bei manuellem Sync als auch im Hintergrund.
+
+### 🔄 Volle Git-Funktionalität (Eclipse JGit)
+- **Zwei-Wege-Synchronisation:** Unterstützt Klonen, Pull, Fetch, Push, Commit und detaillierte Status-Prüfungen.
+- **Shallow-Clone (`depth = 1`):** Lädt standardmäßig nur den aktuellen Stand herunter und spart Bandbreite sowie Speicherplatz auf dem Mobilgerät.
+- **Diff-Viewer:** Integrierter Diff-Viewer mit farblicher Hervorhebung modifizierter, hinzugefügter und entfernter Zeilen.
+- **Merge-Konflikt-Behandlung:** Klare Auswahlmöglichkeit bei Konflikten („Lokal behalten“ vs. „Remote behalten“).
+- **Hard-Reset & Wiederherstellung:** Schnelle Wiederherstellung versehentlich gelöschter lokaler Dateien aus dem Git-Tree sowie Ein-Klick-Reset („Repository sauber neu klonen“).
+
+### ⚡ Stabilität, Ausfallsicherheit & Sofort-Abbruch
+- **Sofortiger Abbruch:** Laufende oder hängende Synchronisationen können jederzeit sofort abgebrochen werden. Über Socket-Schließung (`transport.close()`) und Thread-Interruption werden blockierte Netzwerkverbindungen innerhalb von Millisekunden freigegeben.
+- **Mobilfunk-Optimierung (5G/LTE):** Robuste Handhabung großer Git-Packfiles und Binärdateien mit optimierten Timeouts und Buffer-Größen.
+- **Automatische Lock-Bereinigung:** Verwaiste Lock-Dateien (`index.lock`, `HEAD.lock`, `refs/...lock`) und unvollständige Merges werden vor jeder Operation automatisch bereinigt.
+- **Selbstheilung bei Zlib-/Cache-Fehlern:** Optimierter JGit `WindowCache` mit Strong References (`isPackedGitUseStrongRefs = true`) verhindert vorzeitiges Bereinigen aktiver Dekomprimierungs-Instanzen (`Inflater has been closed`).
+
+### 📂 Intelligente Repository-Verwaltung
+- **Strukturierte Sortierung:** Aktive Repositories stehen automatisch immer oben und sind alphabetisch geordnet (A–Z). Pausierte Repositories folgen getrennt darunter (ebenfalls alphabetisch).
+- **Pausieren statt Löschen:** Repositories können temporär deaktiviert (`isEnabled = false`) werden, um sie vom automatischen und manuellen Sammel-Sync auszuschließen, ohne die lokale Konfiguration zu verlieren.
+- **Automatische Verzeichnisstruktur:** Definiere ein Standard-Basisverzeichnis (z. B. `/storage/emulated/0/Documents/Notes`); neue Repositories werden dort automatisch in passenden Unterordnern eingerichtet.
+
+### 🌐 GitHub Integration & Explorer
+- **Zentrale Zugangsdaten:** Hinterlege dein GitHub Personal Access Token (PAT) einmalig global in den Einstellungen; Repositories können darauf standardmäßig zugreifen.
+- **1-Klick Repository-Import:** Durchsuche deine privaten und öffentlichen GitHub-Repositories direkt in der App und importiere sie mit einem Fingertipp.
+
+### 🔐 Authentifizierung
+- **HTTPS:** Personal Access Tokens (PAT) oder Benutzername/Passwort mit integrierter Schaltfläche zur Token-Erstellung im Browser.
+- **SSH:** Integrierter Schlüsselgenerator (RSA 2048/4096 und Ed25519) inklusive Schlüsselimport und 1-Klick-Kopieren des Public Keys.
+
+### ⏱️ Hintergrund-Sync & Schnellzugriff
+- **Android WorkManager:** Zuverlässige, akkuschonende Hintergrund-Synchronisation in konfigurierbaren Intervallen (15 min bis 24 h).
+- **Quick Settings Kachel (Statusleiste):** Schnelles Synchronisieren aller aktiven Repositories mit einem Klick direkt aus den Android-Schnelleinstellungen.
+
+### 🎨 Benutzeroberfläche & Speicherzugriff
+- **Material 3 & Jetpack Compose:** Moderne Oberfläche mit Dynamic Color Support und Dark Mode.
+- **Obsidian-Kompatibilität:** Reibungsloser Zugriff auf Gerätespeicherpfade (`/storage/emulated/0/...`) für nahtlose Zusammenarbeit mit Obsidian und anderen Markdown-Editoren.
 
 ---
 
 ## Build & Release
 
-Das Projekt nutzt den standardisierten Gradle-Build-Workflow aus `AGENTS.md`:
+Das Projekt verwendet das automatisierte Build- und Release-Skript `push.ps1`:
 
 ```powershell
-# Automatische Versionierung, Release-APK Erstellung und Git-Push:
-powershell -ExecutionPolicy Bypass -File .\push.ps1 -ChangeSummary "Feature-Beschreibung"
+# Inkrementiert die Version, aktualisiert das Changelog, baut die signierte Release-APK,
+# committet die Änderungen und veröffentlicht das Release auf GitHub:
+powershell -ExecutionPolicy Bypass -File .\push.ps1 -ChangeSummary "Beschreibung der Änderungen"
 ```
 
-Die fertige, signierte Release-APK wird automatisch im Projekt-Hauptverzeichnis als `Gitsyncer-release.apk` abgelegt.
+Release-Builds werden automatisch als Release-Assets auf GitHub Releases bereitgestellt (`gh release create / upload`).
