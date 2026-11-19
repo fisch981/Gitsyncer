@@ -63,10 +63,16 @@ if ($existingChangelog -match '(?s)(# Changelog.*?---\s*\r?\n\r?\n)(.*)') {
 
 # 3. Release APK kompilieren
 Write-Host "==> Kompiliere Release-APK v$newName..." -ForegroundColor Cyan
-& "C:\Users\docker\AppData\Local\AndroidBuildTools\gradle\gradle-8.9\bin\gradle.bat" copyReleaseApkToRoot --no-daemon
+& "C:\Users\docker\AppData\Local\AndroidBuildTools\gradle\gradle-8.9\bin\gradle.bat" assembleRelease --no-daemon
 
-if (-not (Test-Path "Gitsyncer-release.apk")) {
-    Write-Error "Release APK konnte nicht im Root-Verzeichnis erstellt werden!"
+$apkFile = Join-Path $PSScriptRoot "app\build\outputs\apk\release\Gitsyncer-release.apk"
+if (-not (Test-Path $apkFile)) {
+    $fallbackApk = Join-Path $PSScriptRoot "app\build\outputs\apk\release\app-release.apk"
+    if (Test-Path $fallbackApk) {
+        $apkFile = $fallbackApk
+    } else {
+        Write-Error "Release APK konnte nicht unter $apkFile erstellt werden!"
+    }
 }
 
 # 4. Git Stage, Commit & Push
@@ -90,9 +96,9 @@ gh release view "v$newName" 2>$null | Out-Null
 $releaseExists = ($LASTEXITCODE -eq 0)
 $ErrorActionPreference = $prevEap
 if ($releaseExists) {
-    gh release upload "v$newName" "Gitsyncer-release.apk" --clobber
+    gh release upload "v$newName" "$apkFile#Gitsyncer-release.apk" --clobber
 } else {
-    gh release create "v$newName" "Gitsyncer-release.apk" --title "Gitsyncer v$newName" --notes "$ChangeSummary"
+    gh release create "v$newName" "$apkFile#Gitsyncer-release.apk" --title "Gitsyncer v$newName" --notes "$ChangeSummary"
 }
 if ($LASTEXITCODE -ne 0) {
     throw "GitHub Release Upload für v$newName fehlgeschlagen!"

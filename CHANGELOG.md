@@ -6,6 +6,11 @@ und dieses Projekt hält sich an [Semantic Versioning](https://semver.org/lang/d
 
 ---
 
+## [1.3.1] - 2026-11-19
+
+### Geändert / Hinzugefügt
+- build: Release-APK ausschliesslich im Build-Verzeichnis erzeugen und per GitHub Releases ausliefern (Root-APK entfernt)
+
 ## [1.3.0] - 2026-11-19
 
 ### Geändert / Hinzugefügt
