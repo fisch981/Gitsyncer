@@ -87,6 +87,7 @@ fun EditRepoScreen(
     var isEnabled by remember { mutableStateOf(existingRepo?.isEnabled ?: true) }
     var autoSyncEnabled by remember { mutableStateOf(existingRepo?.autoSyncEnabled ?: true) }
     var shallowClone by remember { mutableStateOf(existingRepo?.shallowClone ?: true) }
+    var releaseApksOnly by remember { mutableStateOf(existingRepo?.releaseApksOnly ?: false) }
     var syncIntervalMinutes by remember { mutableStateOf(existingRepo?.syncIntervalMinutes ?: 60) }
     var syncDirection by remember { mutableStateOf(existingRepo?.syncDirection ?: SyncDirection.TWO_WAY) }
     var autoCommitMessage by remember { mutableStateOf(existingRepo?.autoCommitMessage ?: "Sync %timestamp%") }
@@ -121,7 +122,7 @@ fun EditRepoScreen(
             } ?: uri.toString()
             val cleanPath = path.trim().trimEnd('/', '\\')
             val cleanBase = defaultBaseDir.trim().trimEnd('/', '\\')
-            localPath = if (cleanPath.equals(cleanBase, ignoreCase = true) && name.isNotBlank()) {
+            localPath = if (!releaseApksOnly && cleanPath.equals(cleanBase, ignoreCase = true) && name.isNotBlank()) {
                 "$cleanBase/${name.trim()}"
             } else {
                 cleanPath
@@ -278,7 +279,7 @@ fun EditRepoScreen(
 
                     val cleanCurrentPath = localPath.trim().trimEnd('/', '\\')
                     val cleanBaseDir = defaultBaseDir.trim().trimEnd('/', '\\')
-                    if (cleanCurrentPath.equals(cleanBaseDir, ignoreCase = true) && cleanCurrentPath.isNotBlank()) {
+                    if (!releaseApksOnly && cleanCurrentPath.equals(cleanBaseDir, ignoreCase = true) && cleanCurrentPath.isNotBlank()) {
                         Surface(
                             shape = MaterialTheme.shapes.small,
                             color = MaterialTheme.colorScheme.errorContainer
@@ -305,13 +306,15 @@ fun EditRepoScreen(
                         }
                     }
 
-                    OutlinedTextField(
-                        value = branch,
-                        onValueChange = { branch = it },
-                        label = { Text("Branch") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
+                    if (!releaseApksOnly) {
+                        OutlinedTextField(
+                            value = branch,
+                            onValueChange = { branch = it },
+                            label = { Text("Branch") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
                 }
             }
 
@@ -427,6 +430,19 @@ fun EditRepoScreen(
                             )
                         }
                         AuthType.SSH_KEY -> {
+                            if (releaseApksOnly) {
+                                Surface(
+                                    shape = MaterialTheme.shapes.small,
+                                    color = MaterialTheme.colorScheme.secondaryContainer
+                                ) {
+                                    Text(
+                                        text = "Hinweis: Für GitHub Releases wird automatisch das HTTPS-Token (bzw. das zentrale GitHub-Token aus den Einstellungen) verwendet.",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                        modifier = Modifier.padding(10.dp)
+                                    )
+                                }
+                            }
                             if (sshKeys.isEmpty()) {
                                 Text(
                                     "Noch keine SSH-Schlüssel hinterlegt.",
@@ -490,13 +506,17 @@ fun EditRepoScreen(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Column {
-                            Text("Automatische Hintergrund-Sync", fontWeight = FontWeight.SemiBold)
-                            Text("Synchronisiert im Hintergrund per WorkManager", style = MaterialTheme.typography.bodySmall)
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Nur Release-APKs herunterladen", fontWeight = FontWeight.SemiBold)
+                            Text(
+                                "Lädt statt des gesamten Git-Repositories nur die .apk-Dateien aus dem neuesten GitHub Release in den Zielordner herunter (spart Speicher & Datenvolumen).",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
                         }
                         Switch(
-                            checked = autoSyncEnabled,
-                            onCheckedChange = { autoSyncEnabled = it }
+                            checked = releaseApksOnly,
+                            onCheckedChange = { releaseApksOnly = it }
                         )
                     }
 
@@ -506,17 +526,34 @@ fun EditRepoScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
-                            Text("Shallow-Clone (Tiefe 1)", fontWeight = FontWeight.SemiBold)
-                            Text(
-                                "Empfohlen: Lädt nur den aktuellen Stand herunter. Verhindert Speicherprobleme und Hänger bei großen Repositories mit Binärdateien/APKs (wie FolderGallery).",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
+                            Text("Automatische Hintergrund-Sync", fontWeight = FontWeight.SemiBold)
+                            Text("Synchronisiert im Hintergrund per WorkManager", style = MaterialTheme.typography.bodySmall)
                         }
                         Switch(
-                            checked = shallowClone,
-                            onCheckedChange = { shallowClone = it }
+                            checked = autoSyncEnabled,
+                            onCheckedChange = { autoSyncEnabled = it }
                         )
+                    }
+
+                    if (!releaseApksOnly) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text("Shallow-Clone (Tiefe 1)", fontWeight = FontWeight.SemiBold)
+                                Text(
+                                    "Empfohlen: Lädt nur den aktuellen Stand herunter. Verhindert Speicherprobleme und Hänger bei großen Repositories mit Binärdateien/APKs (wie FolderGallery).",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Switch(
+                                checked = shallowClone,
+                                onCheckedChange = { shallowClone = it }
+                            )
+                        }
                     }
 
                     if (autoSyncEnabled) {
@@ -533,49 +570,51 @@ fun EditRepoScreen(
                         }
                     }
 
-                    Text("Richtung:", style = MaterialTheme.typography.labelMedium)
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        FilterChip(
-                            selected = syncDirection == SyncDirection.TWO_WAY,
-                            onClick = { syncDirection = SyncDirection.TWO_WAY },
-                            label = { Text("Zwei-Wege") }
-                        )
-                        FilterChip(
-                            selected = syncDirection == SyncDirection.PUSH_ONLY,
-                            onClick = { syncDirection = SyncDirection.PUSH_ONLY },
-                            label = { Text("Nur Push") }
-                        )
-                        FilterChip(
-                            selected = syncDirection == SyncDirection.PULL_ONLY,
-                            onClick = { syncDirection = SyncDirection.PULL_ONLY },
-                            label = { Text("Nur Pull") }
-                        )
-                    }
+                    if (!releaseApksOnly) {
+                        Text("Richtung:", style = MaterialTheme.typography.labelMedium)
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            FilterChip(
+                                selected = syncDirection == SyncDirection.TWO_WAY,
+                                onClick = { syncDirection = SyncDirection.TWO_WAY },
+                                label = { Text("Zwei-Wege") }
+                            )
+                            FilterChip(
+                                selected = syncDirection == SyncDirection.PUSH_ONLY,
+                                onClick = { syncDirection = SyncDirection.PUSH_ONLY },
+                                label = { Text("Nur Push") }
+                            )
+                            FilterChip(
+                                selected = syncDirection == SyncDirection.PULL_ONLY,
+                                onClick = { syncDirection = SyncDirection.PULL_ONLY },
+                                label = { Text("Nur Pull") }
+                            )
+                        }
 
-                    OutlinedTextField(
-                        value = autoCommitMessage,
-                        onValueChange = { autoCommitMessage = it },
-                        label = { Text("Commit-Nachricht Template") },
-                        placeholder = { Text("Sync %timestamp%") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
+                        OutlinedTextField(
+                            value = autoCommitMessage,
+                            onValueChange = { autoCommitMessage = it },
+                            label = { Text("Commit-Nachricht Template") },
+                            placeholder = { Text("Sync %timestamp%") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
 
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedTextField(
-                            value = authorName,
-                            onValueChange = { authorName = it },
-                            label = { Text("Git Author") },
-                            singleLine = true,
-                            modifier = Modifier.weight(1f)
-                        )
-                        OutlinedTextField(
-                            value = authorEmail,
-                            onValueChange = { authorEmail = it },
-                            label = { Text("Git Email") },
-                            singleLine = true,
-                            modifier = Modifier.weight(1f)
-                        )
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedTextField(
+                                value = authorName,
+                                onValueChange = { authorName = it },
+                                label = { Text("Git Author") },
+                                singleLine = true,
+                                modifier = Modifier.weight(1f)
+                            )
+                            OutlinedTextField(
+                                value = authorEmail,
+                                onValueChange = { authorEmail = it },
+                                label = { Text("Git Email") },
+                                singleLine = true,
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
                     }
                 }
             }
@@ -596,6 +635,40 @@ fun EditRepoScreen(
                 }
             }
 
+            fun buildUpdatedConfig(preserveSyncState: Boolean): GitRepositoryConfig {
+                val cleanBase = defaultBaseDir.trim().trimEnd('/', '\\')
+                var resolvedPath = localPath.trim().trimEnd('/', '\\')
+                if (!releaseApksOnly && resolvedPath.equals(cleanBase, ignoreCase = true) && name.isNotBlank()) {
+                    resolvedPath = "$cleanBase/${name.trim()}"
+                    localPath = resolvedPath
+                }
+                return GitRepositoryConfig(
+                    id = existingRepo?.id ?: java.util.UUID.randomUUID().toString(),
+                    name = name.trim(),
+                    remoteUrl = remoteUrl.trim(),
+                    localPath = resolvedPath,
+                    branch = branch.trim().ifBlank { "main" },
+                    authType = authType,
+                    tokenOrPassword = tokenOrPassword.trim(),
+                    username = username.trim(),
+                    sshKeyId = selectedSshKeyId,
+                    autoSyncEnabled = autoSyncEnabled,
+                    isEnabled = isEnabled,
+                    shallowClone = shallowClone,
+                    releaseApksOnly = releaseApksOnly,
+                    lastReleaseTag = existingRepo?.lastReleaseTag,
+                    lastReleaseAssetMeta = existingRepo?.lastReleaseAssetMeta,
+                    syncIntervalMinutes = syncIntervalMinutes,
+                    syncDirection = syncDirection,
+                    autoCommitMessage = autoCommitMessage.trim(),
+                    authorName = authorName.trim(),
+                    authorEmail = authorEmail.trim(),
+                    lastSyncStatus = if (preserveSyncState) (existingRepo?.lastSyncStatus ?: "IDLE") else "IDLE",
+                    lastSyncTimestamp = if (preserveSyncState) (existingRepo?.lastSyncTimestamp ?: 0L) else 0L,
+                    lastErrorMessage = if (preserveSyncState) existingRepo?.lastErrorMessage else null
+                )
+            }
+
             // Save Buttons
             Button(
                 onClick = {
@@ -604,41 +677,21 @@ fun EditRepoScreen(
                         return@Button
                     }
 
-                    val cleanBase = defaultBaseDir.trim().trimEnd('/', '\\')
-                    var resolvedPath = localPath.trim().trimEnd('/', '\\')
-                    if (resolvedPath.equals(cleanBase, ignoreCase = true) && name.isNotBlank()) {
-                        resolvedPath = "$cleanBase/${name.trim()}"
-                        localPath = resolvedPath
-                    }
-
-                    val updatedConfig = GitRepositoryConfig(
-                        id = existingRepo?.id ?: java.util.UUID.randomUUID().toString(),
-                        name = name.trim(),
-                        remoteUrl = remoteUrl.trim(),
-                        localPath = resolvedPath,
-                        branch = branch.trim().ifBlank { "main" },
-                        authType = authType,
-                        tokenOrPassword = tokenOrPassword.trim(),
-                        username = username.trim(),
-                        sshKeyId = selectedSshKeyId,
-                        autoSyncEnabled = autoSyncEnabled,
-                        isEnabled = isEnabled,
-                        shallowClone = shallowClone,
-                        syncIntervalMinutes = syncIntervalMinutes,
-                        syncDirection = syncDirection,
-                        autoCommitMessage = autoCommitMessage.trim(),
-                        authorName = authorName.trim(),
-                        authorEmail = authorEmail.trim()
-                    )
-
+                    val updatedConfig = buildUpdatedConfig(preserveSyncState = false)
                     repoStore.saveRepository(updatedConfig)
                     SyncScheduler.scheduleRepo(context, updatedConfig)
 
                     isCloning = true
-                    statusText = "Klone / Initialisiere Repository..."
+                    statusText = if (updatedConfig.releaseApksOnly) {
+                        "Lade Release-APKs von GitHub..."
+                    } else {
+                        "Klone / Initialisiere Repository..."
+                    }
                     coroutineScope.launch {
                         val result = withContext(Dispatchers.IO) {
-                            if (!gitManager.isGitRepo(updatedConfig.localPath)) {
+                            if (updatedConfig.releaseApksOnly) {
+                                gitManager.sync(updatedConfig) { msg, _ -> statusText = msg }
+                            } else if (!gitManager.isGitRepo(updatedConfig.localPath)) {
                                 gitManager.cloneRepository(updatedConfig) { msg, _ -> statusText = msg }
                             } else {
                                 gitManager.sync(updatedConfig) { msg, _ -> statusText = msg }
@@ -647,7 +700,8 @@ fun EditRepoScreen(
                         isCloning = false
                         if (result.success) {
                             repoStore.updateRepoSyncStatus(updatedConfig.id, "SUCCESS")
-                            Toast.makeText(context, "Repository erfolgreich eingerichtet!", Toast.LENGTH_SHORT).show()
+                            val successMsg = if (updatedConfig.releaseApksOnly) result.message else "Repository erfolgreich eingerichtet!"
+                            Toast.makeText(context, successMsg, Toast.LENGTH_SHORT).show()
                             onNavigateBack()
                         } else {
                             repoStore.updateRepoSyncStatus(updatedConfig.id, "FAILED", result.message)
@@ -671,33 +725,7 @@ fun EditRepoScreen(
                         return@OutlinedButton
                     }
 
-                    val cleanBase = defaultBaseDir.trim().trimEnd('/', '\\')
-                    var resolvedPath = localPath.trim().trimEnd('/', '\\')
-                    if (resolvedPath.equals(cleanBase, ignoreCase = true) && name.isNotBlank()) {
-                        resolvedPath = "$cleanBase/${name.trim()}"
-                        localPath = resolvedPath
-                    }
-
-                    val updatedConfig = GitRepositoryConfig(
-                        id = existingRepo?.id ?: java.util.UUID.randomUUID().toString(),
-                        name = name.trim(),
-                        remoteUrl = remoteUrl.trim(),
-                        localPath = resolvedPath,
-                        branch = branch.trim().ifBlank { "main" },
-                        authType = authType,
-                        tokenOrPassword = tokenOrPassword.trim(),
-                        username = username.trim(),
-                        sshKeyId = selectedSshKeyId,
-                        autoSyncEnabled = autoSyncEnabled,
-                        isEnabled = isEnabled,
-                        shallowClone = shallowClone,
-                        syncIntervalMinutes = syncIntervalMinutes,
-                        syncDirection = syncDirection,
-                        autoCommitMessage = autoCommitMessage.trim(),
-                        authorName = authorName.trim(),
-                        authorEmail = authorEmail.trim()
-                    )
-
+                    val updatedConfig = buildUpdatedConfig(preserveSyncState = true)
                     repoStore.saveRepository(updatedConfig)
                     SyncScheduler.scheduleRepo(context, updatedConfig)
                     Toast.makeText(context, "Gespeichert", Toast.LENGTH_SHORT).show()

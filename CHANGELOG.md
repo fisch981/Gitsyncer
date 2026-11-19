@@ -6,6 +6,11 @@ und dieses Projekt hält sich an [Semantic Versioning](https://semver.org/lang/d
 
 ---
 
+## [1.3.0] - 2026-11-19
+
+### Geändert / Hinzugefügt
+- Optionaler Modus 'Nur Release-APKs herunterladen': Lädt gezielt APKs aus GitHub Releases statt ganzer Repositories inkl. Release-Browser und Direkt-Installation
+
 ## [1.2.6] - 2026-11-03
 
 ### Geändert / Hinzugefügt

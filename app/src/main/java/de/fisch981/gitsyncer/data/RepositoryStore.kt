@@ -139,6 +139,49 @@ class RepositoryStore(private val context: Context) {
     }
 
     @Synchronized
+    fun updateRepoReleaseInfo(
+        repoId: String,
+        releaseTag: String,
+        assetMeta: String
+    ) {
+        val current = _repositories.value.toMutableList()
+        val index = current.indexOfFirst { it.id == repoId }
+        if (index >= 0) {
+            val updated = current[index].copy(
+                lastReleaseTag = releaseTag,
+                lastReleaseAssetMeta = assetMeta
+            )
+            current[index] = updated
+            val sorted = current.sortedWith(
+                compareByDescending<GitRepositoryConfig> { it.isEnabled }
+                    .thenBy { it.name.lowercase() }
+            )
+            _repositories.value = sorted
+            prefs.edit().putString(KEY_REPOSITORIES, gson.toJson(sorted)).apply()
+        }
+    }
+
+    @Synchronized
+    fun toggleReleaseApksOnly(repoId: String): Boolean {
+        val current = _repositories.value.toMutableList()
+        val index = current.indexOfFirst { it.id == repoId }
+        if (index >= 0) {
+            val newState = !current[index].releaseApksOnly
+            val updated = current[index].copy(releaseApksOnly = newState)
+            current[index] = updated
+            val sorted = current.sortedWith(
+                compareByDescending<GitRepositoryConfig> { it.isEnabled }
+                    .thenBy { it.name.lowercase() }
+            )
+            _repositories.value = sorted
+            prefs.edit().putString(KEY_REPOSITORIES, gson.toJson(sorted)).apply()
+            SyncScheduler.scheduleRepo(context, updated)
+            return newState
+        }
+        return false
+    }
+
+    @Synchronized
     fun deleteRepository(repoId: String) {
         val current = _repositories.value.toMutableList()
         current.removeAll { it.id == repoId }

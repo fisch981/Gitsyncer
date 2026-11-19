@@ -3,6 +3,8 @@ package de.fisch981.gitsyncer.git
 import android.content.Context
 import com.jcraft.jsch.JSch
 import com.jcraft.jsch.Session
+import de.fisch981.gitsyncer.data.GitHubApiClient
+import de.fisch981.gitsyncer.data.GitHubRelease
 import de.fisch981.gitsyncer.data.RepositoryStore
 import de.fisch981.gitsyncer.model.*
 import org.eclipse.jgit.api.Git
@@ -26,6 +28,7 @@ import java.util.concurrent.ConcurrentHashMap
 class GitManager(private val context: Context) {
 
     private val repoStore = RepositoryStore.getInstance(context)
+    private val githubApi = GitHubApiClient()
 
     private fun isTransientNetworkError(t: Throwable): Boolean {
         val msg = ((t.message ?: "") + " " + (t.cause?.message ?: "")).lowercase()
@@ -423,6 +426,189 @@ class GitManager(private val context: Context) {
         }
     }
 
+    fun resolveGitHubToken(config: GitRepositoryConfig): String {
+        return if (config.authType != AuthType.SSH_KEY && config.tokenOrPassword.isNotBlank()) {
+            config.tokenOrPassword.trim()
+        } else {
+            repoStore.githubToken.value.trim()
+        }
+    }
+
+    fun getLocalApkFiles(localPath: String): List<File> {
+        val dir = File(localPath)
+        if (!dir.exists() || !dir.isDirectory) return emptyList()
+        return dir.listFiles()
+            ?.filter { it.isFile && it.name.endsWith(".apk", ignoreCase = true) }
+            ?.sortedBy { it.name.lowercase() }
+            ?: emptyList()
+    }
+
+    private fun runLockedWithCancel(
+        config: GitRepositoryConfig,
+        block: (java.util.concurrent.atomic.AtomicBoolean) -> SyncResult
+    ): SyncResult {
+        val lock = repoLocks.computeIfAbsent(config.id) { Any() }
+        synchronized(lock) {
+            val cancelFlag = cancelFlags.computeIfAbsent(config.id) { java.util.concurrent.atomic.AtomicBoolean(false) }
+            cancelFlag.set(false)
+            activeThreads[config.id] = Thread.currentThread()
+            return try {
+                block(cancelFlag)
+            } finally {
+                activeTransports.remove(config.id)
+                activeThreads.remove(config.id)
+            }
+        }
+    }
+
+    fun forceSyncReleaseApks(
+        config: GitRepositoryConfig,
+        progressListener: ((String, Int) -> Unit)? = null
+    ): SyncResult = runLockedWithCancel(config) {
+        syncReleaseApksInternal(config, forceDownload = true, progressListener = progressListener)
+    }
+
+    fun downloadSpecificReleaseApks(
+        config: GitRepositoryConfig,
+        release: GitHubRelease,
+        progressListener: ((String, Int) -> Unit)? = null
+    ): SyncResult = runLockedWithCancel(config) { cancelFlag ->
+        val token = resolveGitHubToken(config)
+        downloadReleaseAssetsForRelease(config, release, token, forceDownload = true, cancelFlag = cancelFlag, progressListener = progressListener)
+    }
+
+    fun cleanupLegacyGitRepoFiles(config: GitRepositoryConfig): SyncResult {
+        val lock = repoLocks.computeIfAbsent(config.id) { Any() }
+        synchronized(lock) {
+            if (!config.releaseApksOnly) {
+                return SyncResult(false, "Bereinigung nur im Modus 'Nur Release-APKs' erlaubt.")
+            }
+            val targetDir = File(config.localPath)
+            if (!targetDir.exists() || !File(targetDir, ".git").exists()) {
+                return SyncResult(true, "Keine alten Git-Dateien vorhanden.")
+            }
+            var removedCount = 0
+            targetDir.listFiles()?.forEach { entry ->
+                val isRootApk = entry.isFile && entry.name.endsWith(".apk", ignoreCase = true)
+                if (!isRootApk) {
+                    if (entry.deleteRecursively()) {
+                        removedCount++
+                    }
+                }
+            }
+            return SyncResult(true, "$removedCount alte Git-/Projekt-Einträge entfernt (APKs behalten).")
+        }
+    }
+
+    private fun syncReleaseApksInternal(
+        config: GitRepositoryConfig,
+        forceDownload: Boolean,
+        progressListener: ((String, Int) -> Unit)? = null
+    ): SyncResult {
+        val cancelFlag = cancelFlags.computeIfAbsent(config.id) { java.util.concurrent.atomic.AtomicBoolean(false) }
+        if (cancelFlag.get()) {
+            return SyncResult(success = false, message = "Synchronisation durch Benutzer abgebrochen")
+        }
+
+        val (owner, repoName) = GitHubApiClient.parseOwnerAndRepo(config.remoteUrl)
+            ?: return SyncResult(
+                success = false,
+                message = "Ungültige GitHub-URL: Release-APK-Download unterstützt nur GitHub-Repositories."
+            )
+
+        val token = resolveGitHubToken(config)
+        progressListener?.invoke("Prüfe neuestes GitHub Release...", 10)
+        val release = githubApi.getLatestReleaseSync(owner, repoName, token).getOrElse { err ->
+            return SyncResult(
+                success = false,
+                message = err.localizedMessage ?: "Fehler beim Laden des GitHub Releases"
+            )
+        }
+
+        return downloadReleaseAssetsForRelease(config, release, token, forceDownload, cancelFlag, progressListener)
+    }
+
+    private fun downloadReleaseAssetsForRelease(
+        config: GitRepositoryConfig,
+        release: GitHubRelease,
+        token: String,
+        forceDownload: Boolean,
+        cancelFlag: java.util.concurrent.atomic.AtomicBoolean,
+        progressListener: ((String, Int) -> Unit)?
+    ): SyncResult {
+        if (cancelFlag.get()) {
+            return SyncResult(success = false, message = "Synchronisation durch Benutzer abgebrochen")
+        }
+
+        val apkAssets = release.assets.filter { it.name.endsWith(".apk", ignoreCase = true) }
+        if (apkAssets.isEmpty()) {
+            return SyncResult(
+                success = false,
+                message = "Release ${release.tag_name} enthält keine .apk-Dateien."
+            )
+        }
+
+        val expectedMeta = apkAssets
+            .sortedBy { it.name }
+            .joinToString(";") { "${it.name}|${it.id}|${it.updated_at.orEmpty()}|${it.size}" }
+
+        val targetDir = File(config.localPath)
+        if (!forceDownload &&
+            config.lastReleaseTag == release.tag_name &&
+            config.lastReleaseAssetMeta == expectedMeta
+        ) {
+            val allLocalPresent = apkAssets.all { asset ->
+                val f = File(targetDir, asset.name)
+                f.exists() && f.isFile && (asset.size <= 0L || f.length() == asset.size)
+            }
+            if (allLocalPresent) {
+                progressListener?.invoke("Release ${release.tag_name} ist bereits aktuell", 100)
+                return SyncResult(
+                    success = true,
+                    message = "Release ${release.tag_name} ist bereits aktuell (${apkAssets.size} APK)"
+                )
+            }
+        }
+
+        if (!targetDir.exists()) {
+            targetDir.mkdirs()
+        }
+
+        apkAssets.forEachIndexed { idx, asset ->
+            if (cancelFlag.get()) {
+                return SyncResult(success = false, message = "Synchronisation durch Benutzer abgebrochen")
+            }
+            val destFile = File(targetDir, asset.name)
+            progressListener?.invoke("Lade ${asset.name} (${idx + 1}/${apkAssets.size})...", 15)
+            val dlResult = githubApi.downloadReleaseAssetSync(
+                asset = asset,
+                token = token,
+                destFile = destFile,
+                isCancelled = { cancelFlag.get() },
+                progressListener = progressListener
+            )
+            dlResult.onFailure { err ->
+                val rawMsg = if (err is java.net.SocketException || err is java.net.SocketTimeoutException) {
+                    "${err.javaClass.simpleName}: ${err.localizedMessage ?: "Netzwerkfehler"}"
+                } else {
+                    err.localizedMessage ?: err.javaClass.simpleName
+                }
+                val cancelled = cancelFlag.get() || rawMsg.contains("abgebrochen", ignoreCase = true)
+                return SyncResult(
+                    success = false,
+                    message = if (cancelled) "Synchronisation durch Benutzer abgebrochen" else rawMsg
+                )
+            }
+        }
+
+        repoStore.updateRepoReleaseInfo(config.id, release.tag_name, expectedMeta)
+        progressListener?.invoke("Release ${release.tag_name} heruntergeladen!", 100)
+        return SyncResult(
+            success = true,
+            message = "Release ${release.tag_name} heruntergeladen (${apkAssets.size} APK)"
+        )
+    }
+
     private fun performSync(
         config: GitRepositoryConfig,
         progressListener: ((String, Int) -> Unit)? = null
@@ -430,6 +616,9 @@ class GitManager(private val context: Context) {
         val cancelFlag = cancelFlags.computeIfAbsent(config.id) { java.util.concurrent.atomic.AtomicBoolean(false) }
         if (cancelFlag.get()) {
             return SyncResult(success = false, message = "Synchronisation durch Benutzer abgebrochen")
+        }
+        if (config.releaseApksOnly) {
+            return syncReleaseApksInternal(config, forceDownload = false, progressListener = progressListener)
         }
         val targetDir = File(config.localPath)
         if (!isGitRepo(config.localPath)) {
