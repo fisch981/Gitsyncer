@@ -279,7 +279,8 @@ fun DashboardScreen(
                                     }
                                     if (res.success) {
                                         repoStore.updateRepoSyncStatus(repo.id, "SUCCESS")
-                                        Toast.makeText(context, "${repo.name}: Synchronisiert!", Toast.LENGTH_SHORT).show()
+                                        val msg = if (repo.releaseApksOnly) "${repo.name}: ${res.message}" else "${repo.name}: Synchronisiert!"
+                                        Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
                                     } else {
                                         val status = if (res.conflicts.isNotEmpty()) "CONFLICT" else if (res.message.contains("abgebrochen", ignoreCase = true)) "CANCELLED" else "FAILED"
                                         repoStore.updateRepoSyncStatus(repo.id, status, res.message)
@@ -357,17 +358,46 @@ fun RepositoryCard(
                             )
                         }
                     }
-                    Surface(
-                        shape = MaterialTheme.shapes.extraSmall,
-                        color = if (repo.isEnabled) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant
-                    ) {
-                        Text(
-                            text = repo.branch,
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = if (repo.isEnabled) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                        )
+                    if (repo.releaseApksOnly) {
+                        Surface(
+                            shape = MaterialTheme.shapes.extraSmall,
+                            color = MaterialTheme.colorScheme.secondaryContainer
+                        ) {
+                            Text(
+                                text = "Nur APKs",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                            )
+                        }
+                        if (!repo.lastReleaseTag.isNullOrBlank()) {
+                            Surface(
+                                shape = MaterialTheme.shapes.extraSmall,
+                                color = if (repo.isEnabled) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant
+                            ) {
+                                Text(
+                                    text = repo.lastReleaseTag,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = if (repo.isEnabled) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                )
+                            }
+                        }
+                    } else {
+                        Surface(
+                            shape = MaterialTheme.shapes.extraSmall,
+                            color = if (repo.isEnabled) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant
+                        ) {
+                            Text(
+                                text = repo.branch,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = if (repo.isEnabled) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                            )
+                        }
                     }
                 }
             }
@@ -457,9 +487,13 @@ fun RepositoryCard(
                             enabled = repo.isEnabled,
                             contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
                         ) {
-                            Icon(Icons.Default.Sync, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Icon(
+                                if (repo.releaseApksOnly) Icons.Default.Download else Icons.Default.Sync,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp)
+                            )
                             Spacer(modifier = Modifier.width(6.dp))
-                            Text("Sync Jetzt")
+                            Text(if (repo.releaseApksOnly) "APKs laden" else "Sync Jetzt")
                         }
                     }
 
@@ -467,9 +501,13 @@ fun RepositoryCard(
                         onClick = onOpen,
                         contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
                     ) {
-                        Icon(Icons.Default.Folder, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Icon(
+                            if (repo.releaseApksOnly) Icons.Default.Android else Icons.Default.Folder,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp)
+                        )
                         Spacer(modifier = Modifier.width(6.dp))
-                        Text("Dateien & Diff")
+                        Text(if (repo.releaseApksOnly) "Releases & APKs" else "Dateien & Diff")
                     }
                 }
 

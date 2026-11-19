@@ -12,8 +12,8 @@ android {
         applicationId = "de.fisch981.gitsyncer"
         minSdk = 26
         targetSdk = 35
-        versionCode = 13
-        versionName = "1.2.6"
+        versionCode = 14
+        versionName = "1.3.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {

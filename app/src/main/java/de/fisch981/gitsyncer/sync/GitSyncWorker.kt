@@ -64,7 +64,7 @@ class GitSyncWorker(
 
             if (result.success) {
                 repoStore.updateRepoSyncStatus(repo.id, "SUCCESS")
-                showNotification(repo.name, "Sync successful")
+                showNotification(repo.name, result.message)
             } else {
                 anyFailed = true
                 val status = if (result.conflicts.isNotEmpty()) "CONFLICT" else "FAILED"

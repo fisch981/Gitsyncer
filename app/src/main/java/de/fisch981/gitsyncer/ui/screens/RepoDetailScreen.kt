@@ -1,10 +1,17 @@
 package de.fisch981.gitsyncer.ui.screens
 
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import android.os.Build
+import android.provider.Settings
 import android.widget.Toast
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -14,8 +21,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.FileProvider
+import de.fisch981.gitsyncer.data.GitHubApiClient
+import de.fisch981.gitsyncer.data.GitHubRelease
 import de.fisch981.gitsyncer.data.RepositoryStore
 import de.fisch981.gitsyncer.git.GitManager
 import de.fisch981.gitsyncer.model.*
@@ -25,8 +36,40 @@ import de.fisch981.gitsyncer.ui.theme.GitRed
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.File
 import java.text.SimpleDateFormat
 import java.util.*
+
+private fun installApkFile(context: Context, apkFile: File) {
+    if (!apkFile.exists()) {
+        Toast.makeText(context, "APK-Datei nicht gefunden", Toast.LENGTH_SHORT).show()
+        return
+    }
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !context.packageManager.canRequestPackageInstalls()) {
+        Toast.makeText(context, "Bitte Installation aus dieser Quelle erlauben", Toast.LENGTH_LONG).show()
+        val permIntent = Intent(
+            Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+            Uri.parse("package:${context.packageName}")
+        ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        context.startActivity(permIntent)
+        return
+    }
+    try {
+        val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", apkFile)
+        val installIntent = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(uri, "application/vnd.android.package-archive")
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        context.startActivity(installIntent)
+    } catch (e: Exception) {
+        Toast.makeText(context, "Installation fehlgeschlagen: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
+    }
+}
+
+private fun formatFileSizeMb(bytes: Long): String {
+    val mb = bytes / (1024.0 * 1024.0)
+    return String.format(Locale.getDefault(), "%.1f MB", mb)
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -39,6 +82,7 @@ fun RepoDetailScreen(
     val coroutineScope = rememberCoroutineScope()
     val repoStore = remember { RepositoryStore.getInstance(context) }
     val gitManager = remember { GitManager(context) }
+    val githubApi = remember { GitHubApiClient() }
 
     val repoList by repoStore.repositories.collectAsState()
     val repo = repoList.firstOrNull { it.id == repoId }
@@ -53,6 +97,12 @@ fun RepoDetailScreen(
     var selectedTabIndex by remember { mutableIntStateOf(0) }
     var changes by remember { mutableStateOf<List<FileChange>>(emptyList()) }
     var commits by remember { mutableStateOf<List<CommitInfo>>(emptyList()) }
+    var localApks by remember { mutableStateOf<List<File>>(emptyList()) }
+    var releases by remember { mutableStateOf<List<GitHubRelease>>(emptyList()) }
+    var isFetchingReleases by remember { mutableStateOf(false) }
+    var releaseError by remember { mutableStateOf<String?>(null) }
+    var showCleanupConfirm by remember { mutableStateOf(false) }
+
     var isLoading by remember { mutableStateOf(false) }
     var activeSyncJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
     var commitMessage by remember { mutableStateOf("") }
@@ -62,18 +112,55 @@ fun RepoDetailScreen(
     var diffContent by remember { mutableStateOf("") }
     var isDiffLoading by remember { mutableStateOf(false) }
 
-    fun refreshData() {
+    fun refreshReleases(targetRepo: GitRepositoryConfig) {
+        val parsed = GitHubApiClient.parseOwnerAndRepo(targetRepo.remoteUrl)
+        if (parsed == null) {
+            releases = emptyList()
+            releaseError = "Keine gültige GitHub-URL erkannt."
+            return
+        }
         coroutineScope.launch {
-            isLoading = true
-            withContext(Dispatchers.IO) {
-                changes = gitManager.getStatus(repo)
-                commits = gitManager.getLog(repo, 30)
+            isFetchingReleases = true
+            releaseError = null
+            val token = gitManager.resolveGitHubToken(targetRepo)
+            val res = githubApi.listReleases(parsed.first, parsed.second, token, 15)
+            isFetchingReleases = false
+            res.onSuccess { list ->
+                releases = list
+            }.onFailure { err ->
+                releaseError = err.localizedMessage ?: "Fehler beim Laden der Releases"
             }
-            isLoading = false
         }
     }
 
-    LaunchedEffect(repoId) {
+    fun refreshData() {
+        val latest = repoStore.getRepository(repo.id) ?: repo
+        coroutineScope.launch {
+            isLoading = true
+            withContext(Dispatchers.IO) {
+                if (latest.releaseApksOnly) {
+                    localApks = gitManager.getLocalApkFiles(latest.localPath)
+                    changes = emptyList()
+                    commits = emptyList()
+                } else {
+                    changes = gitManager.getStatus(latest)
+                    commits = gitManager.getLog(latest, 30)
+                }
+            }
+            isLoading = false
+        }
+        if (latest.releaseApksOnly) {
+            refreshReleases(latest)
+        }
+    }
+
+    LaunchedEffect(repo.releaseApksOnly) {
+        if (repo.releaseApksOnly && selectedTabIndex > 1) {
+            selectedTabIndex = 0
+        }
+    }
+
+    LaunchedEffect(repoId, repo.releaseApksOnly) {
         refreshData()
     }
 
@@ -152,7 +239,8 @@ fun RepoDetailScreen(
                                     }
                                     if (result.success) {
                                         repoStore.updateRepoSyncStatus(repo.id, "SUCCESS")
-                                        Toast.makeText(context, "Erfolgreich synchronisiert!", Toast.LENGTH_SHORT).show()
+                                        val okMsg = if (repo.releaseApksOnly) result.message else "Erfolgreich synchronisiert!"
+                                        Toast.makeText(context, okMsg, Toast.LENGTH_SHORT).show()
                                     } else {
                                         val status = if (result.conflicts.isNotEmpty()) "CONFLICT" else if (result.message.contains("abgebrochen", ignoreCase = true)) "CANCELLED" else "FAILED"
                                         repoStore.updateRepoSyncStatus(repo.id, status, result.message)
@@ -162,7 +250,10 @@ fun RepoDetailScreen(
                                 }
                             }
                         ) {
-                            Icon(Icons.Default.Sync, contentDescription = "Synchronisieren")
+                            Icon(
+                                if (repo.releaseApksOnly) Icons.Default.Download else Icons.Default.Sync,
+                                contentDescription = if (repo.releaseApksOnly) "APKs laden" else "Synchronisieren"
+                            )
                         }
                     }
                     IconButton(onClick = onEditRepo) {
@@ -177,363 +268,825 @@ fun RepoDetailScreen(
                 .fillMaxSize()
                 .padding(padding)
         ) {
-            TabRow(selectedTabIndex = selectedTabIndex) {
-                Tab(
-                    selected = selectedTabIndex == 0,
-                    onClick = { selectedTabIndex = 0 },
-                    text = { Text("Änderungen (${changes.size})") }
-                )
-                Tab(
-                    selected = selectedTabIndex == 1,
-                    onClick = { selectedTabIndex = 1 },
-                    text = { Text("Historie (${commits.size})") }
-                )
-                Tab(
-                    selected = selectedTabIndex == 2,
-                    onClick = { selectedTabIndex = 2 },
-                    text = { Text("Übersicht") }
-                )
+            if (repo.releaseApksOnly) {
+                TabRow(selectedTabIndex = selectedTabIndex.coerceIn(0, 1)) {
+                    Tab(
+                        selected = selectedTabIndex == 0,
+                        onClick = { selectedTabIndex = 0 },
+                        text = { Text("Release-APKs (${localApks.size})") }
+                    )
+                    Tab(
+                        selected = selectedTabIndex == 1,
+                        onClick = { selectedTabIndex = 1 },
+                        text = { Text("Übersicht") }
+                    )
+                }
+            } else {
+                TabRow(selectedTabIndex = selectedTabIndex) {
+                    Tab(
+                        selected = selectedTabIndex == 0,
+                        onClick = { selectedTabIndex = 0 },
+                        text = { Text("Änderungen (${changes.size})") }
+                    )
+                    Tab(
+                        selected = selectedTabIndex == 1,
+                        onClick = { selectedTabIndex = 1 },
+                        text = { Text("Historie (${commits.size})") }
+                    )
+                    Tab(
+                        selected = selectedTabIndex == 2,
+                        onClick = { selectedTabIndex = 2 },
+                        text = { Text("Übersicht") }
+                    )
+                }
             }
 
-            if (isLoading) {
+            if (isLoading || isFetchingReleases) {
                 LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
             }
 
-            when (selectedTabIndex) {
-                0 -> {
-                    // Status & Changes Tab
-                    Column(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(16.dp)
-                    ) {
-                        // Quick Commit Box
-                        Card(
-                            modifier = Modifier.fillMaxWidth(),
-                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
-                        ) {
-                            Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                OutlinedTextField(
-                                    value = commitMessage,
-                                    onValueChange = { commitMessage = it },
-                                    label = { Text("Commit Nachricht") },
-                                    placeholder = { Text("z.B. Notizen aktualisiert") },
-                                    singleLine = true,
-                                    modifier = Modifier.fillMaxWidth()
-                                )
-
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                ) {
-                                    Button(
-                                        onClick = {
-                                            if (commitMessage.isBlank()) {
-                                                Toast.makeText(context, "Bitte Nachricht eingeben", Toast.LENGTH_SHORT).show()
-                                                return@Button
-                                            }
-                                            coroutineScope.launch {
-                                                GitManager.resetCancelFlag(repo.id)
-                                                isLoading = true
-                                                val res = withContext(Dispatchers.IO) {
-                                                    val tempRepo = repo.copy(autoCommitMessage = commitMessage)
-                                                    gitManager.sync(tempRepo)
-                                                }
-                                                isLoading = false
-                                                val current = repoStore.getRepository(repo.id)
-                                                if (current?.lastSyncStatus == "CANCELLED" || GitManager.isSyncCancelled(repo.id)) {
-                                                    refreshData()
-                                                    return@launch
-                                                }
-                                                if (res.success) {
-                                                    commitMessage = ""
-                                                    Toast.makeText(context, "Commit & Push erfolgreich!", Toast.LENGTH_SHORT).show()
-                                                    refreshData()
-                                                } else {
-                                                    Toast.makeText(context, "Fehler: ${res.message}", Toast.LENGTH_LONG).show()
-                                                }
-                                            }
-                                        },
-                                        modifier = Modifier.weight(1f),
-                                        enabled = !isLoading && changes.isNotEmpty()
-                                    ) {
-                                        Icon(Icons.Default.Upload, contentDescription = null, modifier = Modifier.size(18.dp))
-                                        Spacer(modifier = Modifier.width(4.dp))
-                                        Text("Commit & Push")
-                                    }
-
-                                    OutlinedButton(
-                                        onClick = { refreshData() },
-                                        enabled = !isLoading
-                                    ) {
-                                        Icon(Icons.Default.Refresh, contentDescription = "Aktualisieren")
-                                    }
-                                }
-                            }
-                        }
-
-                        Spacer(modifier = Modifier.height(12.dp))
-
-                        if (changes.isEmpty()) {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .weight(1f),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                    Icon(
-                                        Icons.Default.CheckCircle,
-                                        contentDescription = null,
-                                        tint = GitGreen,
-                                        modifier = Modifier.size(48.dp)
-                                    )
-                                    Spacer(modifier = Modifier.height(8.dp))
-                                    Text("Arbeitsverzeichnis ist sauber", fontWeight = FontWeight.SemiBold)
-                                    Text("Keine ungespeicherten lokalen Änderungen", style = MaterialTheme.typography.bodySmall)
-                                }
-                            }
-                        } else {
-                            LazyColumn(
-                                modifier = Modifier.weight(1f),
-                                verticalArrangement = Arrangement.spacedBy(6.dp)
-                            ) {
-                                items(changes) { change ->
-                                    val (badgeColor, badgeText) = when (change.changeType) {
-                                        ChangeType.MODIFIED -> GitOrange to "MOD"
-                                        ChangeType.ADDED -> GitGreen to "NEU"
-                                        ChangeType.DELETED -> GitRed to "DEL"
-                                        ChangeType.UNTRACKED -> MaterialTheme.colorScheme.primary to "UNT"
-                                        ChangeType.CONFLICT -> GitRed to "KONFLIKT"
-                                    }
-
-                                    Card(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .clickable {
-                                                selectedDiffFile = change
-                                                isDiffLoading = true
-                                                coroutineScope.launch {
-                                                    diffContent = withContext(Dispatchers.IO) {
-                                                        gitManager.getDiff(repo, change.path)
-                                                    }
-                                                    isDiffLoading = false
-                                                }
-                                            }
-                                    ) {
-                                        Row(
-                                            modifier = Modifier
-                                                .padding(12.dp)
-                                                .fillMaxWidth(),
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.SpaceBetween
-                                        ) {
-                                            Row(
-                                                modifier = Modifier.weight(1f),
-                                                verticalAlignment = Alignment.CenterVertically
-                                            ) {
-                                                Surface(
-                                                    color = badgeColor.copy(alpha = 0.2f),
-                                                    shape = MaterialTheme.shapes.small
-                                                ) {
-                                                    Text(
-                                                        text = badgeText,
-                                                        color = badgeColor,
-                                                        fontWeight = FontWeight.Bold,
-                                                        fontSize = 10.sp,
-                                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                                                    )
-                                                }
-                                                Spacer(modifier = Modifier.width(10.dp))
-                                                Text(
-                                                    text = change.path,
-                                                    style = MaterialTheme.typography.bodyMedium,
-                                                    fontFamily = FontFamily.Monospace,
-                                                    maxLines = 1
-                                                )
-                                            }
-
-                                            Icon(
-                                                Icons.Default.ChevronRight,
-                                                contentDescription = null,
-                                                tint = MaterialTheme.colorScheme.onSurfaceVariant
-                                            )
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                1 -> {
-                    // Commit History Tab
-                    if (commits.isEmpty()) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .padding(16.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text("Keine Commit-Historie vorhanden")
-                        }
-                    } else {
+            if (repo.releaseApksOnly) {
+                when (selectedTabIndex.coerceIn(0, 1)) {
+                    0 -> {
                         LazyColumn(
                             modifier = Modifier
                                 .fillMaxSize()
                                 .padding(16.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                            verticalArrangement = Arrangement.spacedBy(12.dp)
                         ) {
-                            items(commits) { commit ->
-                                val dateStr = SimpleDateFormat("dd.MM.yyyy HH:mm", Locale.getDefault())
-                                    .format(Date(commit.timestamp))
-
-                                Card(modifier = Modifier.fillMaxWidth()) {
-                                    Column(modifier = Modifier.padding(12.dp)) {
+                            item {
+                                Card(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    colors = CardDefaults.cardColors(
+                                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                                    )
+                                ) {
+                                    Column(
+                                        modifier = Modifier.padding(16.dp),
+                                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                                    ) {
                                         Row(
                                             modifier = Modifier.fillMaxWidth(),
-                                            horizontalArrangement = Arrangement.SpaceBetween
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
                                         ) {
                                             Text(
-                                                commit.shortId,
-                                                fontFamily = FontFamily.Monospace,
-                                                color = MaterialTheme.colorScheme.primary,
+                                                "Heruntergeladene APKs",
                                                 fontWeight = FontWeight.Bold,
-                                                fontSize = 12.sp
+                                                style = MaterialTheme.typography.titleMedium
                                             )
+                                            if (!repo.lastReleaseTag.isNullOrBlank()) {
+                                                Surface(
+                                                    shape = MaterialTheme.shapes.extraSmall,
+                                                    color = MaterialTheme.colorScheme.primaryContainer
+                                                ) {
+                                                    Text(
+                                                        text = repo.lastReleaseTag,
+                                                        fontSize = 11.sp,
+                                                        fontWeight = FontWeight.SemiBold,
+                                                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                                    )
+                                                }
+                                            }
+                                        }
+
+                                        if (localApks.isEmpty()) {
                                             Text(
-                                                dateStr,
+                                                "Noch keine APK im Zielordner (${repo.localPath}) vorhanden.",
                                                 style = MaterialTheme.typography.bodySmall,
                                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                                             )
+                                        } else {
+                                            val sdf = SimpleDateFormat("dd.MM.yyyy HH:mm", Locale.getDefault())
+                                            localApks.forEach { apkFile ->
+                                                Card(modifier = Modifier.fillMaxWidth()) {
+                                                    Row(
+                                                        modifier = Modifier
+                                                            .fillMaxWidth()
+                                                            .padding(12.dp),
+                                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                                        verticalAlignment = Alignment.CenterVertically
+                                                    ) {
+                                                        Column(modifier = Modifier.weight(1f)) {
+                                                            Text(
+                                                                apkFile.name,
+                                                                fontWeight = FontWeight.SemiBold,
+                                                                style = MaterialTheme.typography.bodyMedium,
+                                                                maxLines = 1,
+                                                                overflow = TextOverflow.Ellipsis
+                                                            )
+                                                            Text(
+                                                                "${formatFileSizeMb(apkFile.length())} · ${sdf.format(Date(apkFile.lastModified()))}",
+                                                                style = MaterialTheme.typography.bodySmall,
+                                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                            )
+                                                        }
+                                                        Spacer(modifier = Modifier.width(8.dp))
+                                                        Button(
+                                                            onClick = { installApkFile(context, apkFile) },
+                                                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                                                        ) {
+                                                            Icon(Icons.Default.Android, contentDescription = null, modifier = Modifier.size(16.dp))
+                                                            Spacer(modifier = Modifier.width(4.dp))
+                                                            Text("Installieren")
+                                                        }
+                                                    }
+                                                }
+                                            }
                                         }
-                                        Spacer(modifier = Modifier.height(4.dp))
-                                        Text(
-                                            commit.message,
-                                            fontWeight = FontWeight.SemiBold,
-                                            style = MaterialTheme.typography.bodyMedium
-                                        )
-                                        Spacer(modifier = Modifier.height(2.dp))
-                                        Text(
-                                            commit.author,
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
+
+                                        Button(
+                                            onClick = {
+                                                activeSyncJob = coroutineScope.launch {
+                                                    GitManager.resetCancelFlag(repo.id)
+                                                    isLoading = true
+                                                    repoStore.updateRepoSyncStatus(repo.id, "RUNNING")
+                                                    val res = withContext(Dispatchers.IO) {
+                                                        gitManager.sync(repo)
+                                                    }
+                                                    isLoading = false
+                                                    activeSyncJob = null
+                                                    if (res.success) {
+                                                        repoStore.updateRepoSyncStatus(repo.id, "SUCCESS")
+                                                        Toast.makeText(context, res.message, Toast.LENGTH_SHORT).show()
+                                                    } else {
+                                                        val st = if (res.message.contains("abgebrochen", ignoreCase = true)) "CANCELLED" else "FAILED"
+                                                        repoStore.updateRepoSyncStatus(repo.id, st, res.message)
+                                                        Toast.makeText(context, "Fehler: ${res.message}", Toast.LENGTH_LONG).show()
+                                                    }
+                                                    refreshData()
+                                                }
+                                            },
+                                            modifier = Modifier.fillMaxWidth(),
+                                            enabled = !isLoading
+                                        ) {
+                                            Icon(Icons.Default.CloudDownload, contentDescription = null, modifier = Modifier.size(18.dp))
+                                            Spacer(modifier = Modifier.width(8.dp))
+                                            Text("Neuestes Release prüfen & laden")
+                                        }
                                     }
                                 }
                             }
-                        }
-                    }
-                }
 
-                2 -> {
-                    // Overview Tab
-                    Column(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        Card(modifier = Modifier.fillMaxWidth()) {
-                            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Text("Konfigurations-Details", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
-                                Divider()
-                                DetailRow("Status:", if (repo.isEnabled) "Aktiv" else "Pausiert (von Sync ausgenommen)")
+                            item {
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.SpaceBetween,
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Text("Repository aktiv:", fontWeight = FontWeight.Medium)
-                                    Switch(
-                                        checked = repo.isEnabled,
-                                        onCheckedChange = {
-                                            repoStore.toggleRepositoryEnabled(repo.id)
-                                        }
+                                    Text(
+                                        "GitHub Releases",
+                                        fontWeight = FontWeight.Bold,
+                                        style = MaterialTheme.typography.titleMedium
+                                    )
+                                    IconButton(
+                                        onClick = { refreshReleases(repo) },
+                                        enabled = !isFetchingReleases
+                                    ) {
+                                        Icon(Icons.Default.Refresh, contentDescription = "Releases aktualisieren")
+                                    }
+                                }
+                            }
+
+                            if (!releaseError.isNullOrBlank()) {
+                                item {
+                                    Card(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)
+                                    ) {
+                                        Text(
+                                            text = releaseError!!,
+                                            color = MaterialTheme.colorScheme.onErrorContainer,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            modifier = Modifier.padding(12.dp)
+                                        )
+                                    }
+                                }
+                            } else if (!isFetchingReleases && releases.isEmpty()) {
+                                item {
+                                    Text(
+                                        "Keine veröffentlichten GitHub Releases gefunden.",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
                                 }
-                                Divider()
-                                DetailRow("Remote URL:", repo.remoteUrl)
-                                DetailRow("Branch:", repo.branch)
-                                DetailRow("Lokaler Pfad:", repo.localPath)
-                                DetailRow("Auth-Methode:", repo.authType.name)
-                                DetailRow("Sync-Intervall:", "${repo.syncIntervalMinutes} Minuten")
-                                DetailRow("Auto-Sync aktiv:", if (repo.autoSyncEnabled) "Ja" else "Nein")
-                                DetailRow("Richtung:", repo.syncDirection.name)
-                                DetailRow("Commit Author:", "${repo.authorName} <${repo.authorEmail}>")
+                            }
+
+                            items(releases, key = { it.id }) { release ->
+                                val apkAssets = release.assets.filter { it.name.endsWith(".apk", ignoreCase = true) }
+                                val datePart = (release.published_at ?: release.created_at ?: "").take(10)
+                                Card(modifier = Modifier.fillMaxWidth()) {
+                                    Column(
+                                        modifier = Modifier.padding(14.dp),
+                                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Row(
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                                modifier = Modifier.weight(1f)
+                                            ) {
+                                                Surface(
+                                                    shape = MaterialTheme.shapes.extraSmall,
+                                                    color = MaterialTheme.colorScheme.primaryContainer
+                                                ) {
+                                                    Text(
+                                                        text = release.tag_name,
+                                                        fontSize = 11.sp,
+                                                        fontWeight = FontWeight.Bold,
+                                                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                                    )
+                                                }
+                                                if (!release.name.isNullOrBlank() && release.name != release.tag_name) {
+                                                    Text(
+                                                        text = release.name,
+                                                        fontWeight = FontWeight.SemiBold,
+                                                        style = MaterialTheme.typography.bodyMedium,
+                                                        maxLines = 1,
+                                                        overflow = TextOverflow.Ellipsis
+                                                    )
+                                                }
+                                            }
+                                            if (datePart.isNotBlank()) {
+                                                Text(
+                                                    text = datePart,
+                                                    style = MaterialTheme.typography.bodySmall,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                )
+                                            }
+                                        }
+
+                                        if (!release.body.isNullOrBlank()) {
+                                            Text(
+                                                text = release.body.trim(),
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                maxLines = 3,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                        }
+
+                                        if (apkAssets.isEmpty()) {
+                                            Text(
+                                                "Keine APK-Dateien in diesem Release.",
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.outline
+                                            )
+                                        } else {
+                                            Divider()
+                                            apkAssets.forEach { asset ->
+                                                Row(
+                                                    modifier = Modifier.fillMaxWidth(),
+                                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                                    verticalAlignment = Alignment.CenterVertically
+                                                ) {
+                                                    Column(modifier = Modifier.weight(1f)) {
+                                                        Text(
+                                                            asset.name,
+                                                            style = MaterialTheme.typography.bodySmall,
+                                                            fontWeight = FontWeight.Medium,
+                                                            maxLines = 1,
+                                                            overflow = TextOverflow.Ellipsis
+                                                        )
+                                                        Text(
+                                                            formatFileSizeMb(asset.size),
+                                                            style = MaterialTheme.typography.labelSmall,
+                                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                        )
+                                                    }
+                                                    Spacer(modifier = Modifier.width(8.dp))
+                                                    OutlinedButton(
+                                                        onClick = {
+                                                            activeSyncJob = coroutineScope.launch {
+                                                                GitManager.resetCancelFlag(repo.id)
+                                                                isLoading = true
+                                                                repoStore.updateRepoSyncStatus(repo.id, "RUNNING")
+                                                                val res = withContext(Dispatchers.IO) {
+                                                                    gitManager.downloadSpecificReleaseApks(repo, release)
+                                                                }
+                                                                isLoading = false
+                                                                activeSyncJob = null
+                                                                if (res.success) {
+                                                                    repoStore.updateRepoSyncStatus(repo.id, "SUCCESS")
+                                                                    Toast.makeText(context, res.message, Toast.LENGTH_SHORT).show()
+                                                                } else {
+                                                                    val st = if (res.message.contains("abgebrochen", ignoreCase = true)) "CANCELLED" else "FAILED"
+                                                                    repoStore.updateRepoSyncStatus(repo.id, st, res.message)
+                                                                    Toast.makeText(context, "Fehler: ${res.message}", Toast.LENGTH_LONG).show()
+                                                                }
+                                                                withContext(Dispatchers.IO) {
+                                                                    localApks = gitManager.getLocalApkFiles(repo.localPath)
+                                                                }
+                                                            }
+                                                        },
+                                                        enabled = !isLoading,
+                                                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
+                                                    ) {
+                                                        Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(16.dp))
+                                                        Spacer(modifier = Modifier.width(4.dp))
+                                                        Text("Laden")
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
                             }
                         }
+                    }
 
-                        Button(
-                            onClick = onEditRepo,
-                            modifier = Modifier.fillMaxWidth()
+                    1 -> {
+                        val scrollState = rememberScrollState()
+                        val hasLegacyGitDir = File(repo.localPath, ".git").exists()
+                        Column(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .verticalScroll(scrollState)
+                                .padding(16.dp),
+                            verticalArrangement = Arrangement.spacedBy(12.dp)
                         ) {
-                            Icon(Icons.Default.Edit, contentDescription = null)
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text("Repository Konfiguration bearbeiten")
-                        }
-
-                        OutlinedButton(
-                            onClick = {
-                                coroutineScope.launch {
-                                    isLoading = true
-                                    val res = withContext(Dispatchers.IO) {
-                                        gitManager.restoreMissingFiles(repo)
+                            Card(modifier = Modifier.fillMaxWidth()) {
+                                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Text("Konfigurations-Details", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
+                                    Divider()
+                                    DetailRow("Status:", if (repo.isEnabled) "Aktiv" else "Pausiert (von Sync ausgenommen)")
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text("Repository aktiv:", fontWeight = FontWeight.Medium)
+                                        Switch(
+                                            checked = repo.isEnabled,
+                                            onCheckedChange = { repoStore.toggleRepositoryEnabled(repo.id) }
+                                        )
                                     }
-                                    isLoading = false
-                                    if (res.success) {
-                                        repoStore.updateRepoSyncStatus(repo.id, "SUCCESS")
-                                        Toast.makeText(context, "Dateien erfolgreich wiederhergestellt!", Toast.LENGTH_SHORT).show()
-                                    } else {
-                                        repoStore.updateRepoSyncStatus(repo.id, "FAILED", res.message)
-                                        Toast.makeText(context, "Fehler: ${res.message}", Toast.LENGTH_LONG).show()
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text("Nur Release-APKs herunterladen:", fontWeight = FontWeight.Medium)
+                                        Switch(
+                                            checked = repo.releaseApksOnly,
+                                            onCheckedChange = { repoStore.toggleReleaseApksOnly(repo.id) }
+                                        )
                                     }
-                                    refreshData()
+                                    Divider()
+                                    DetailRow("Modus:", "Nur Release-APKs")
+                                    DetailRow("Geladenes Release:", repo.lastReleaseTag ?: "Noch keines")
+                                    DetailRow("Remote URL:", repo.remoteUrl)
+                                    DetailRow("Lokaler Pfad:", repo.localPath)
+                                    DetailRow("Sync-Intervall:", "${repo.syncIntervalMinutes} Minuten")
+                                    DetailRow("Auto-Sync aktiv:", if (repo.autoSyncEnabled) "Ja" else "Nein")
                                 }
-                            },
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Icon(Icons.Default.Download, contentDescription = null)
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text("Fehlende Dateien wiederherstellen (Hard Reset)")
-                        }
+                            }
 
-                        OutlinedButton(
-                            onClick = {
-                                coroutineScope.launch {
-                                    GitManager.resetCancelFlag(repo.id)
-                                    isLoading = true
-                                    repoStore.updateRepoSyncStatus(repo.id, "RUNNING")
-                                    val res = withContext(Dispatchers.IO) {
-                                        gitManager.recloneRepository(repo)
-                                    }
-                                    isLoading = false
-                                    val current = repoStore.getRepository(repo.id)
-                                    if (current?.lastSyncStatus == "CANCELLED" || GitManager.isSyncCancelled(repo.id)) {
+                            Button(
+                                onClick = onEditRepo,
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Icon(Icons.Default.Edit, contentDescription = null)
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("Repository Konfiguration bearbeiten")
+                            }
+
+                            OutlinedButton(
+                                onClick = {
+                                    activeSyncJob = coroutineScope.launch {
+                                        GitManager.resetCancelFlag(repo.id)
+                                        isLoading = true
+                                        repoStore.updateRepoSyncStatus(repo.id, "RUNNING")
+                                        val res = withContext(Dispatchers.IO) {
+                                            gitManager.forceSyncReleaseApks(repo)
+                                        }
+                                        isLoading = false
+                                        activeSyncJob = null
+                                        if (res.success) {
+                                            repoStore.updateRepoSyncStatus(repo.id, "SUCCESS")
+                                            Toast.makeText(context, res.message, Toast.LENGTH_SHORT).show()
+                                        } else {
+                                            repoStore.updateRepoSyncStatus(repo.id, "FAILED", res.message)
+                                            Toast.makeText(context, "Fehler: ${res.message}", Toast.LENGTH_LONG).show()
+                                        }
                                         refreshData()
-                                        return@launch
                                     }
-                                    if (res.success) {
-                                        repoStore.updateRepoSyncStatus(repo.id, "SUCCESS")
-                                        Toast.makeText(context, "Erfolgreich sauber neu geklont!", Toast.LENGTH_SHORT).show()
-                                    } else {
-                                        repoStore.updateRepoSyncStatus(repo.id, "FAILED", res.message)
-                                        Toast.makeText(context, "Fehler: ${res.message}", Toast.LENGTH_LONG).show()
-                                    }
-                                    refreshData()
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                                enabled = !isLoading
+                            ) {
+                                Icon(Icons.Default.CloudDownload, contentDescription = null)
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("Aktuelles Release erneut laden (Force)")
+                            }
+
+                            if (hasLegacyGitDir) {
+                                OutlinedButton(
+                                    onClick = { showCleanupConfirm = true },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error)
+                                ) {
+                                    Icon(Icons.Default.DeleteOutline, contentDescription = null)
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text("Alte Git-Dateien entfernen (nur APKs behalten)")
                                 }
-                            },
-                            modifier = Modifier.fillMaxWidth(),
-                            colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error)
+                            }
+                        }
+                    }
+                }
+            } else {
+                when (selectedTabIndex) {
+                    0 -> {
+                        // Status & Changes Tab
+                        Column(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(16.dp)
                         ) {
-                            Icon(Icons.Default.Refresh, contentDescription = null)
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text("Repository sauber neu klonen (Reset)")
+                            // Quick Commit Box
+                            Card(
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                            ) {
+                                Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    OutlinedTextField(
+                                        value = commitMessage,
+                                        onValueChange = { commitMessage = it },
+                                        label = { Text("Commit Nachricht") },
+                                        placeholder = { Text("z.B. Notizen aktualisiert") },
+                                        singleLine = true,
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
+
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        Button(
+                                            onClick = {
+                                                if (commitMessage.isBlank()) {
+                                                    Toast.makeText(context, "Bitte Nachricht eingeben", Toast.LENGTH_SHORT).show()
+                                                    return@Button
+                                                }
+                                                coroutineScope.launch {
+                                                    GitManager.resetCancelFlag(repo.id)
+                                                    isLoading = true
+                                                    val res = withContext(Dispatchers.IO) {
+                                                        val tempRepo = repo.copy(autoCommitMessage = commitMessage)
+                                                        gitManager.sync(tempRepo)
+                                                    }
+                                                    isLoading = false
+                                                    val current = repoStore.getRepository(repo.id)
+                                                    if (current?.lastSyncStatus == "CANCELLED" || GitManager.isSyncCancelled(repo.id)) {
+                                                        refreshData()
+                                                        return@launch
+                                                    }
+                                                    if (res.success) {
+                                                        commitMessage = ""
+                                                        Toast.makeText(context, "Commit & Push erfolgreich!", Toast.LENGTH_SHORT).show()
+                                                        refreshData()
+                                                    } else {
+                                                        Toast.makeText(context, "Fehler: ${res.message}", Toast.LENGTH_LONG).show()
+                                                    }
+                                                }
+                                            },
+                                            modifier = Modifier.weight(1f),
+                                            enabled = !isLoading && changes.isNotEmpty()
+                                        ) {
+                                            Icon(Icons.Default.Upload, contentDescription = null, modifier = Modifier.size(18.dp))
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                            Text("Commit & Push")
+                                        }
+
+                                        OutlinedButton(
+                                            onClick = { refreshData() },
+                                            enabled = !isLoading
+                                        ) {
+                                            Icon(Icons.Default.Refresh, contentDescription = "Aktualisieren")
+                                        }
+                                    }
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.height(12.dp))
+
+                            if (changes.isEmpty()) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .weight(1f),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                        Icon(
+                                            Icons.Default.CheckCircle,
+                                            contentDescription = null,
+                                            tint = GitGreen,
+                                            modifier = Modifier.size(48.dp)
+                                        )
+                                        Spacer(modifier = Modifier.height(8.dp))
+                                        Text("Arbeitsverzeichnis ist sauber", fontWeight = FontWeight.SemiBold)
+                                        Text("Keine ungespeicherten lokalen Änderungen", style = MaterialTheme.typography.bodySmall)
+                                    }
+                                }
+                            } else {
+                                LazyColumn(
+                                    modifier = Modifier.weight(1f),
+                                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    items(changes) { change ->
+                                        val (badgeColor, badgeText) = when (change.changeType) {
+                                            ChangeType.MODIFIED -> GitOrange to "MOD"
+                                            ChangeType.ADDED -> GitGreen to "NEU"
+                                            ChangeType.DELETED -> GitRed to "DEL"
+                                            ChangeType.UNTRACKED -> MaterialTheme.colorScheme.primary to "UNT"
+                                            ChangeType.CONFLICT -> GitRed to "KONFLIKT"
+                                        }
+
+                                        Card(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .clickable {
+                                                    selectedDiffFile = change
+                                                    isDiffLoading = true
+                                                    coroutineScope.launch {
+                                                        diffContent = withContext(Dispatchers.IO) {
+                                                            gitManager.getDiff(repo, change.path)
+                                                        }
+                                                        isDiffLoading = false
+                                                    }
+                                                }
+                                        ) {
+                                            Row(
+                                                modifier = Modifier
+                                                    .padding(12.dp)
+                                                    .fillMaxWidth(),
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.SpaceBetween
+                                            ) {
+                                                Row(
+                                                    modifier = Modifier.weight(1f),
+                                                    verticalAlignment = Alignment.CenterVertically
+                                                ) {
+                                                    Surface(
+                                                        color = badgeColor.copy(alpha = 0.2f),
+                                                        shape = MaterialTheme.shapes.small
+                                                    ) {
+                                                        Text(
+                                                            text = badgeText,
+                                                            color = badgeColor,
+                                                            fontWeight = FontWeight.Bold,
+                                                            fontSize = 10.sp,
+                                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                                        )
+                                                    }
+                                                    Spacer(modifier = Modifier.width(10.dp))
+                                                    Text(
+                                                        text = change.path,
+                                                        style = MaterialTheme.typography.bodyMedium,
+                                                        fontFamily = FontFamily.Monospace,
+                                                        maxLines = 1
+                                                    )
+                                                }
+
+                                                Icon(
+                                                    Icons.Default.ChevronRight,
+                                                    contentDescription = null,
+                                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    1 -> {
+                        // Commit History Tab
+                        if (commits.isEmpty()) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .padding(16.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text("Keine Commit-Historie vorhanden")
+                            }
+                        } else {
+                            LazyColumn(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .padding(16.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                items(commits) { commit ->
+                                    val dateStr = SimpleDateFormat("dd.MM.yyyy HH:mm", Locale.getDefault())
+                                        .format(Date(commit.timestamp))
+
+                                    Card(modifier = Modifier.fillMaxWidth()) {
+                                        Column(modifier = Modifier.padding(12.dp)) {
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.SpaceBetween
+                                            ) {
+                                                Text(
+                                                    commit.shortId,
+                                                    fontFamily = FontFamily.Monospace,
+                                                    color = MaterialTheme.colorScheme.primary,
+                                                    fontWeight = FontWeight.Bold,
+                                                    fontSize = 12.sp
+                                                )
+                                                Text(
+                                                    dateStr,
+                                                    style = MaterialTheme.typography.bodySmall,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                )
+                                            }
+                                            Spacer(modifier = Modifier.height(4.dp))
+                                            Text(
+                                                commit.message,
+                                                fontWeight = FontWeight.SemiBold,
+                                                style = MaterialTheme.typography.bodyMedium
+                                            )
+                                            Spacer(modifier = Modifier.height(2.dp))
+                                            Text(
+                                                commit.author,
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    2 -> {
+                        // Overview Tab
+                        val scrollState = rememberScrollState()
+                        Column(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .verticalScroll(scrollState)
+                                .padding(16.dp),
+                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            Card(modifier = Modifier.fillMaxWidth()) {
+                                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Text("Konfigurations-Details", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
+                                    Divider()
+                                    DetailRow("Status:", if (repo.isEnabled) "Aktiv" else "Pausiert (von Sync ausgenommen)")
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text("Repository aktiv:", fontWeight = FontWeight.Medium)
+                                        Switch(
+                                            checked = repo.isEnabled,
+                                            onCheckedChange = {
+                                                repoStore.toggleRepositoryEnabled(repo.id)
+                                            }
+                                        )
+                                    }
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text("Nur Release-APKs herunterladen:", fontWeight = FontWeight.Medium)
+                                        Switch(
+                                            checked = repo.releaseApksOnly,
+                                            onCheckedChange = {
+                                                repoStore.toggleReleaseApksOnly(repo.id)
+                                            }
+                                        )
+                                    }
+                                    Divider()
+                                    DetailRow("Modus:", "Komplettes Git-Repo")
+                                    DetailRow("Remote URL:", repo.remoteUrl)
+                                    DetailRow("Branch:", repo.branch)
+                                    DetailRow("Lokaler Pfad:", repo.localPath)
+                                    DetailRow("Auth-Methode:", repo.authType.name)
+                                    DetailRow("Sync-Intervall:", "${repo.syncIntervalMinutes} Minuten")
+                                    DetailRow("Auto-Sync aktiv:", if (repo.autoSyncEnabled) "Ja" else "Nein")
+                                    DetailRow("Richtung:", repo.syncDirection.name)
+                                    DetailRow("Commit Author:", "${repo.authorName} <${repo.authorEmail}>")
+                                }
+                            }
+
+                            Button(
+                                onClick = onEditRepo,
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Icon(Icons.Default.Edit, contentDescription = null)
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("Repository Konfiguration bearbeiten")
+                            }
+
+                            OutlinedButton(
+                                onClick = {
+                                    coroutineScope.launch {
+                                        isLoading = true
+                                        val res = withContext(Dispatchers.IO) {
+                                            gitManager.restoreMissingFiles(repo)
+                                        }
+                                        isLoading = false
+                                        if (res.success) {
+                                            repoStore.updateRepoSyncStatus(repo.id, "SUCCESS")
+                                            Toast.makeText(context, "Dateien erfolgreich wiederhergestellt!", Toast.LENGTH_SHORT).show()
+                                        } else {
+                                            repoStore.updateRepoSyncStatus(repo.id, "FAILED", res.message)
+                                            Toast.makeText(context, "Fehler: ${res.message}", Toast.LENGTH_LONG).show()
+                                        }
+                                        refreshData()
+                                    }
+                                },
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Icon(Icons.Default.Download, contentDescription = null)
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("Fehlende Dateien wiederherstellen (Hard Reset)")
+                            }
+
+                            OutlinedButton(
+                                onClick = {
+                                    coroutineScope.launch {
+                                        GitManager.resetCancelFlag(repo.id)
+                                        isLoading = true
+                                        repoStore.updateRepoSyncStatus(repo.id, "RUNNING")
+                                        val res = withContext(Dispatchers.IO) {
+                                            gitManager.recloneRepository(repo)
+                                        }
+                                        isLoading = false
+                                        val current = repoStore.getRepository(repo.id)
+                                        if (current?.lastSyncStatus == "CANCELLED" || GitManager.isSyncCancelled(repo.id)) {
+                                            refreshData()
+                                            return@launch
+                                        }
+                                        if (res.success) {
+                                            repoStore.updateRepoSyncStatus(repo.id, "SUCCESS")
+                                            Toast.makeText(context, "Erfolgreich sauber neu geklont!", Toast.LENGTH_SHORT).show()
+                                        } else {
+                                            repoStore.updateRepoSyncStatus(repo.id, "FAILED", res.message)
+                                            Toast.makeText(context, "Fehler: ${res.message}", Toast.LENGTH_LONG).show()
+                                        }
+                                        refreshData()
+                                    }
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error)
+                            ) {
+                                Icon(Icons.Default.Refresh, contentDescription = null)
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("Repository sauber neu klonen (Reset)")
+                            }
                         }
                     }
                 }
             }
         }
+    }
+
+    if (showCleanupConfirm) {
+        AlertDialog(
+            onDismissRequest = { showCleanupConfirm = false },
+            title = { Text("Alte Git-Dateien entfernen?") },
+            text = {
+                Text("Alle Quellcode-Dateien und der .git-Ordner in '${repo.localPath}' werden entfernt. Vorhandene *.apk-Dateien bleiben erhalten.")
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showCleanupConfirm = false
+                        coroutineScope.launch {
+                            isLoading = true
+                            val res = withContext(Dispatchers.IO) {
+                                gitManager.cleanupLegacyGitRepoFiles(repo)
+                            }
+                            isLoading = false
+                            Toast.makeText(context, res.message, Toast.LENGTH_SHORT).show()
+                            refreshData()
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                ) {
+                    Text("Bereinigen")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showCleanupConfirm = false }) {
+                    Text("Abbrechen")
+                }
+            }
+        )
     }
 
     // Diff Dialog

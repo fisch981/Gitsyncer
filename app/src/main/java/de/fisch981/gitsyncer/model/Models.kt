@@ -32,6 +32,9 @@ data class GitRepositoryConfig(
     val authorName: String = "GitSyncer",
     val authorEmail: String = "gitsyncer@fisch981.de",
     val shallowClone: Boolean = true,
+    val releaseApksOnly: Boolean = false,
+    val lastReleaseTag: String? = null,
+    val lastReleaseAssetMeta: String? = null,
     val lastSyncStatus: String = "IDLE", // IDLE, SUCCESS, FAILED, RUNNING, CONFLICT
     val lastSyncTimestamp: Long = 0L,
     val lastErrorMessage: String? = null

@@ -5,9 +5,11 @@
 
 $ErrorActionPreference = "Stop"
 
+$utf8NoBom = [System.Text.UTF8Encoding]::new($false)
+
 # 1. Versionierung in app/build.gradle.kts auslesen & inkrementieren
-$gradleFile = "app/build.gradle.kts"
-$content = Get-Content $gradleFile -Raw
+$gradleFile = Join-Path $PSScriptRoot "app\build.gradle.kts"
+$content = [System.IO.File]::ReadAllText($gradleFile, [System.Text.Encoding]::UTF8)
 
 if ($content -match 'versionCode\s*=\s*(\d+)') {
     $currentCode = [int]$matches[1]
@@ -38,10 +40,10 @@ if ($content -match 'versionName\s*=\s*"([^"]+)"') {
 Write-Host "==> Erhöhe Version: $currentName (Code $currentCode) -> $newName (Code $newCode)" -ForegroundColor Cyan
 $content = $content -replace 'versionCode\s*=\s*\d+', "versionCode = $newCode"
 $content = $content -replace 'versionName\s*=\s*"[^"]+"', "versionName = `"$newName`""
-Set-Content -Path $gradleFile -Value $content -NoNewline
+[System.IO.File]::WriteAllText($gradleFile, $content, $utf8NoBom)
 
 # 2. CHANGELOG.md aktualisieren
-$changelogFile = "CHANGELOG.md"
+$changelogFile = Join-Path $PSScriptRoot "CHANGELOG.md"
 $today = (Get-Date).ToString("yyyy-MM-dd")
 $newEntry = @"
 ## [$newName] - $today
@@ -51,17 +53,17 @@ $newEntry = @"
 
 "@
 
-$existingChangelog = Get-Content $changelogFile -Raw
+$existingChangelog = [System.IO.File]::ReadAllText($changelogFile, [System.Text.Encoding]::UTF8)
 # Nach dem Header einfügen
 if ($existingChangelog -match '(?s)(# Changelog.*?---\s*\r?\n\r?\n)(.*)') {
     $updatedChangelog = $matches[1] + $newEntry + "`n" + $matches[2]
-    Set-Content -Path $changelogFile -Value $updatedChangelog -NoNewline
+    [System.IO.File]::WriteAllText($changelogFile, $updatedChangelog, $utf8NoBom)
     Write-Host "==> Changelog für v$newName aktualisiert" -ForegroundColor Cyan
 }
 
 # 3. Release APK kompilieren
 Write-Host "==> Kompiliere Release-APK v$newName..." -ForegroundColor Cyan
-& "C:\Users\docker\AppData\Local\AndroidBuildTools\gradle\gradle-8.9\bin\gradle.bat" copyReleaseApkToRoot
+& "C:\Users\docker\AppData\Local\AndroidBuildTools\gradle\gradle-8.9\bin\gradle.bat" copyReleaseApkToRoot --no-daemon
 
 if (-not (Test-Path "Gitsyncer-release.apk")) {
     Write-Error "Release APK konnte nicht im Root-Verzeichnis erstellt werden!"
@@ -71,9 +73,15 @@ if (-not (Test-Path "Gitsyncer-release.apk")) {
 Write-Host "==> Stage & Commit..." -ForegroundColor Cyan
 git add -A
 git commit -m "Release v${newName}: $ChangeSummary"
+if ($LASTEXITCODE -ne 0) {
+    throw "git commit fehlgeschlagen!"
+}
 
 Write-Host "==> Pushe nach GitHub (origin main)..." -ForegroundColor Cyan
 git push origin main
+if ($LASTEXITCODE -ne 0) {
+    throw "git push origin main fehlgeschlagen!"
+}
 
 Write-Host "==> Veröffentliche Release-APK auf GitHub Releases (v$newName)..." -ForegroundColor Cyan
 $prevEap = $ErrorActionPreference
