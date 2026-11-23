@@ -544,7 +544,8 @@ class GitManager(private val context: Context) {
         if (apkAssets.isEmpty()) {
             return SyncResult(
                 success = false,
-                message = "Release ${release.tag_name} enthält keine .apk-Dateien."
+                message = "Release ${release.tag_name} enthält keine .apk-Dateien.",
+                releaseTag = release.tag_name
             )
         }
 
@@ -567,7 +568,8 @@ class GitManager(private val context: Context) {
                 return SyncResult(
                     success = true,
                     message = "Release ${release.tag_name} ist bereits aktuell (${apkAssets.size} APK)",
-                    downloadedApkPath = latestLocalApk?.absolutePath
+                    downloadedApkPath = latestLocalApk?.absolutePath,
+                    releaseTag = release.tag_name
                 )
             }
         }
@@ -578,7 +580,7 @@ class GitManager(private val context: Context) {
 
         apkAssets.forEachIndexed { idx, asset ->
             if (cancelFlag.get()) {
-                return SyncResult(success = false, message = "Synchronisation durch Benutzer abgebrochen")
+                return SyncResult(success = false, message = "Synchronisation durch Benutzer abgebrochen", releaseTag = release.tag_name)
             }
             val destFile = File(targetDir, asset.name)
             progressListener?.invoke("Lade ${asset.name} (${idx + 1}/${apkAssets.size})...", 15)
@@ -598,7 +600,8 @@ class GitManager(private val context: Context) {
                 val cancelled = cancelFlag.get() || rawMsg.contains("abgebrochen", ignoreCase = true)
                 return SyncResult(
                     success = false,
-                    message = if (cancelled) "Synchronisation durch Benutzer abgebrochen" else rawMsg
+                    message = if (cancelled) "Synchronisation durch Benutzer abgebrochen" else rawMsg,
+                    releaseTag = release.tag_name
                 )
             }
         }
@@ -609,7 +612,8 @@ class GitManager(private val context: Context) {
         return SyncResult(
             success = true,
             message = "Release ${release.tag_name} heruntergeladen (${apkAssets.size} APK)",
-            downloadedApkPath = latestDownloadedApk?.absolutePath
+            downloadedApkPath = latestDownloadedApk?.absolutePath,
+            releaseTag = release.tag_name
         )
     }
 

@@ -126,6 +126,7 @@ class GitSyncWorker(
     private fun showCompletionNotification(repo: GitRepositoryConfig, result: SyncResult) {
         val notifId = repoNotificationId(repo.id)
         val isError = !result.success
+        val apkFile = if (repo.releaseApksOnly) findLatestApk(repo, result.downloadedApkPath) else null
 
         val pendingIntent = if (isError) {
             // 3. Fehler: Klick öffnet die Einstellungen des Repos in GitSyncer
@@ -143,7 +144,6 @@ class GitSyncWorker(
             )
         } else if (repo.releaseApksOnly) {
             // 1. Erfolgreicher APK-Download: Klick startet direkt die Installation
-            val apkFile = findLatestApk(repo, result.downloadedApkPath)
             if (apkFile != null && apkFile.exists()) {
                 val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", apkFile)
                 val installIntent = Intent(Intent.ACTION_VIEW).apply {
@@ -170,17 +170,40 @@ class GitSyncWorker(
             else -> android.R.drawable.stat_notify_sync
         }
 
+        val apkVersionName = try {
+            apkFile?.let { context.packageManager.getPackageArchiveInfo(it.absolutePath, 0)?.versionName }
+        } catch (_: Exception) { null }
+
+        val versionTag = result.releaseTag
+            ?: repo.lastReleaseTag
+            ?: apkVersionName?.let { if (it.startsWith("v", ignoreCase = true)) it else "v$it" }
+
         val title = when {
             isError -> "${repo.name}: Synchronisation fehlgeschlagen"
-            repo.releaseApksOnly -> "${repo.name}: APK heruntergeladen"
+            repo.releaseApksOnly -> {
+                if (!versionTag.isNullOrBlank()) {
+                    "${repo.name} ($versionTag): APK heruntergeladen"
+                } else {
+                    "${repo.name}: APK heruntergeladen"
+                }
+            }
             else -> "${repo.name}: Synchronisiert"
         }
 
         val text = when {
             isError -> "${result.message} • Tippen für Einstellungen"
             repo.releaseApksOnly -> {
-                val apkName = findLatestApk(repo, result.downloadedApkPath)?.name
-                if (apkName != null) "$apkName • Tippen zum Installieren" else "${result.message} • Tippen zum Installieren"
+                val apkName = apkFile?.name
+                val base = if (result.message.isNotBlank()) {
+                    result.message
+                } else {
+                    if (!versionTag.isNullOrBlank()) "Release $versionTag heruntergeladen" else "APK heruntergeladen"
+                }
+                if (apkName != null && !base.contains(apkName)) {
+                    "$base ($apkName) • Tippen zum Installieren"
+                } else {
+                    "$base • Tippen zum Installieren"
+                }
             }
             else -> "${result.message} • Tippen zum Öffnen des Ordners"
         }
@@ -195,7 +218,8 @@ class GitSyncWorker(
             .setContentIntent(pendingIntent)
 
         if (!isError && repo.releaseApksOnly && pendingIntent != null) {
-            builder.addAction(android.R.drawable.stat_sys_download_done, "Installieren", pendingIntent)
+            val installLabel = if (!versionTag.isNullOrBlank()) "Installieren ($versionTag)" else "Installieren"
+            builder.addAction(android.R.drawable.stat_sys_download_done, installLabel, pendingIntent)
         } else if (!isError && !repo.releaseApksOnly && pendingIntent != null) {
             builder.addAction(android.R.drawable.ic_menu_agenda, "Ordner öffnen", pendingIntent)
         } else if (isError && pendingIntent != null) {
