@@ -63,7 +63,16 @@ if ($existingChangelog -match '(?s)(# Changelog.*?---\s*\r?\n\r?\n)(.*)') {
 
 # 3. Release APK kompilieren
 Write-Host "==> Kompiliere Release-APK v$newName..." -ForegroundColor Cyan
-& "C:\Users\docker\AppData\Local\AndroidBuildTools\gradle\gradle-8.9\bin\gradle.bat" assembleRelease --no-daemon
+$gradleBat = Join-Path $PSScriptRoot "gradlew.bat"
+if (Test-Path $gradleBat) {
+    & $gradleBat assembleRelease --no-daemon
+} elseif (Get-Command gradle -ErrorAction SilentlyContinue) {
+    gradle assembleRelease --no-daemon
+} elseif (Test-Path "C:\Users\docker\AppData\Local\AndroidBuildTools\gradle\gradle-8.9\bin\gradle.bat") {
+    & "C:\Users\docker\AppData\Local\AndroidBuildTools\gradle\gradle-8.9\bin\gradle.bat" assembleRelease --no-daemon
+} else {
+    throw "Weder gradlew.bat noch 'gradle' im Pfad gefunden!"
+}
 
 $apkFile = Join-Path $PSScriptRoot "app\build\outputs\apk\release\Gitsyncer-release.apk"
 if (-not (Test-Path $apkFile)) {

@@ -32,6 +32,9 @@ class RepositoryStore(private val context: Context) {
     private val _defaultBaseDir = MutableStateFlow(defaultStoragePath)
     val defaultBaseDir: StateFlow<String> = _defaultBaseDir.asStateFlow()
 
+    private val _appLanguage = MutableStateFlow("system")
+    val appLanguage: StateFlow<String> = _appLanguage.asStateFlow()
+
     init {
         loadRepositories()
         loadSshKeys()
@@ -42,6 +45,13 @@ class RepositoryStore(private val context: Context) {
         _githubToken.value = prefs.getString(KEY_GITHUB_TOKEN, "") ?: ""
         _githubUser.value = prefs.getString(KEY_GITHUB_USER, "") ?: ""
         _defaultBaseDir.value = prefs.getString(KEY_BASE_DIR, defaultStoragePath) ?: defaultStoragePath
+        _appLanguage.value = prefs.getString(KEY_APP_LANGUAGE, "system") ?: "system"
+    }
+
+    @Synchronized
+    fun setAppLanguage(lang: String) {
+        _appLanguage.value = lang
+        prefs.edit().putString(KEY_APP_LANGUAGE, lang).apply()
     }
 
     @Synchronized
@@ -266,6 +276,7 @@ class RepositoryStore(private val context: Context) {
         private const val KEY_GITHUB_TOKEN = "global_github_token"
         private const val KEY_GITHUB_USER = "global_github_user"
         private const val KEY_BASE_DIR = "default_base_dir"
+        private const val KEY_APP_LANGUAGE = "app_language"
 
         @Volatile
         private var INSTANCE: RepositoryStore? = null

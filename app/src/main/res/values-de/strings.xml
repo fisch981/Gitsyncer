@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">GitSyncer</string>
+    <string name="quick_settings_tile_label">Git Sync</string>
+</resources>

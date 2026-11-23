@@ -1,3 +1,6 @@
+import java.util.Properties
+import java.io.File
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -21,22 +24,56 @@ android {
         }
     }
 
+    val localProperties = Properties()
+    val localPropertiesFile = rootProject.file("local.properties")
+    if (localPropertiesFile.exists()) {
+        localPropertiesFile.inputStream().use { localProperties.load(it) }
+    }
+
+    val keystorePath = localProperties.getProperty("RELEASE_KEYSTORE_PATH")
+        ?: System.getenv("RELEASE_KEYSTORE_PATH")
+        ?: "app.keystore"
+    val keystorePassword = localProperties.getProperty("RELEASE_KEYSTORE_PASSWORD")
+        ?: System.getenv("RELEASE_KEYSTORE_PASSWORD")
+        ?: ""
+    val keystoreKeyAlias = localProperties.getProperty("RELEASE_KEY_ALIAS")
+        ?: System.getenv("RELEASE_KEY_ALIAS")
+        ?: "fisch981"
+    val keystoreKeyPassword = localProperties.getProperty("RELEASE_KEY_PASSWORD")
+        ?: System.getenv("RELEASE_KEY_PASSWORD")
+        ?: ""
+
+    val resolvedKeystoreFile = when {
+        file(keystorePath).exists() -> file(keystorePath)
+        rootProject.file(keystorePath).exists() -> rootProject.file(keystorePath)
+        file("app.keystore").exists() -> file("app.keystore")
+        else -> null
+    }
+    val hasReleaseSigning = resolvedKeystoreFile != null && resolvedKeystoreFile.exists() &&
+            keystorePassword.isNotBlank() && keystoreKeyPassword.isNotBlank()
+
     signingConfigs {
-        create("shared") {
-            storeFile = file("app.keystore")
-            storePassword = "dummyPassword"
-            keyAlias = "fisch981"
-            keyPassword = "dummyPassword"
+        if (hasReleaseSigning) {
+            create("shared") {
+                storeFile = resolvedKeystoreFile
+                storePassword = keystorePassword
+                keyAlias = keystoreKeyAlias
+                keyPassword = keystoreKeyPassword
+            }
         }
     }
 
     buildTypes {
         debug {
-            signingConfig = signingConfigs.getByName("shared")
+            if (hasReleaseSigning) {
+                signingConfig = signingConfigs.getByName("shared")
+            }
         }
         release {
             isMinifyEnabled = false
-            signingConfig = signingConfigs.getByName("shared")
+            if (hasReleaseSigning) {
+                signingConfig = signingConfigs.getByName("shared")
+            }
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"

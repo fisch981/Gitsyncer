@@ -25,10 +25,9 @@ import androidx.compose.ui.unit.sp
 import de.fisch981.gitsyncer.data.RepositoryStore
 import de.fisch981.gitsyncer.git.GitManager
 import de.fisch981.gitsyncer.model.GitRepositoryConfig
-import de.fisch981.gitsyncer.sync.SyncScheduler
 import de.fisch981.gitsyncer.ui.theme.GitGreen
-import de.fisch981.gitsyncer.ui.theme.GitOrange
 import de.fisch981.gitsyncer.ui.theme.GitRed
+import de.fisch981.gitsyncer.ui.theme.LocalAppStrings
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -48,6 +47,7 @@ fun DashboardScreen(
     val coroutineScope = rememberCoroutineScope()
     val repoStore = remember { RepositoryStore.getInstance(context) }
     val gitManager = remember { GitManager(context) }
+    val strings = LocalAppStrings.current
     val repositories by repoStore.repositories.collectAsState()
     val sortedRepositories = remember(repositories) {
         repositories.sortedWith(
@@ -83,7 +83,7 @@ fun DashboardScreen(
                             modifier = Modifier.size(28.dp)
                         )
                         Spacer(modifier = Modifier.width(8.dp))
-                        Text("GitSyncer", fontWeight = FontWeight.Bold)
+                        Text(strings.dashboardTitle, fontWeight = FontWeight.Bold)
                     }
                 },
                 actions = {
@@ -96,16 +96,16 @@ fun DashboardScreen(
                                 repositories.forEach {
                                     GitManager.cancelSync(it.id, it.localPath)
                                     if (it.lastSyncStatus == "RUNNING") {
-                                        repoStore.updateRepoSyncStatus(it.id, "CANCELLED", "Sammel-Sync abgebrochen")
+                                        repoStore.updateRepoSyncStatus(it.id, "CANCELLED", strings.statusCancelled)
                                     }
                                 }
-                                Toast.makeText(context, "Sammel-Sync abgebrochen", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(context, strings.statusCancelled, Toast.LENGTH_SHORT).show()
                                 return@IconButton
                             }
 
                             val activeRepos = repositories.filter { it.isEnabled }.sortedBy { it.name.lowercase() }
                             if (activeRepos.isEmpty()) {
-                                Toast.makeText(context, "Keine aktiven Repositories vorhanden.", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(context, strings.noRepositories, Toast.LENGTH_SHORT).show()
                                 return@IconButton
                             }
                             isSyncingAll = true
@@ -118,7 +118,7 @@ fun DashboardScreen(
                                         gitManager.sync(repo)
                                     }
                                     if (!isSyncingAll || GitManager.isSyncCancelled(repo.id)) {
-                                        repoStore.updateRepoSyncStatus(repo.id, "CANCELLED", "Sammel-Sync abgebrochen")
+                                        repoStore.updateRepoSyncStatus(repo.id, "CANCELLED", strings.statusCancelled)
                                         break
                                     }
                                     if (res.success) {
@@ -130,22 +130,22 @@ fun DashboardScreen(
                                 }
                                 isSyncingAll = false
                                 syncAllJob = null
-                                Toast.makeText(context, "${activeRepos.size} Repositories synchronisiert!", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(context, "${activeRepos.size} Repositories: ${strings.statusSuccess}", Toast.LENGTH_SHORT).show()
                             }
                         },
                         enabled = repositories.any { it.isEnabled }
                     ) {
                         if (isSyncingAll) {
-                            Icon(Icons.Default.Stop, contentDescription = "Sammel-Sync abbrechen", tint = MaterialTheme.colorScheme.error)
+                            Icon(Icons.Default.Stop, contentDescription = strings.cancel, tint = MaterialTheme.colorScheme.error)
                         } else {
-                            Icon(Icons.Default.Sync, contentDescription = "Aktive Repositories synchronisieren")
+                            Icon(Icons.Default.Sync, contentDescription = strings.syncAllActive)
                         }
                     }
                     IconButton(onClick = onNavigateToSshKeys) {
-                        Icon(Icons.Default.VpnKey, contentDescription = "SSH Schlüssel")
+                        Icon(Icons.Default.VpnKey, contentDescription = strings.sshKeysTitle)
                     }
                     IconButton(onClick = onNavigateToSettings) {
-                        Icon(Icons.Default.Settings, contentDescription = "Einstellungen")
+                        Icon(Icons.Default.Settings, contentDescription = strings.settingsTitle)
                     }
                 }
             )
@@ -155,7 +155,7 @@ fun DashboardScreen(
                 onClick = onAddRepo,
                 containerColor = MaterialTheme.colorScheme.primary
             ) {
-                Icon(Icons.Default.Add, contentDescription = "Repository hinzufügen")
+                Icon(Icons.Default.Add, contentDescription = strings.addRepository)
             }
         }
     ) { padding ->
@@ -177,14 +177,14 @@ fun DashboardScreen(
                             Icon(Icons.Default.FolderSpecial, contentDescription = null, tint = MaterialTheme.colorScheme.error)
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(
-                                "Speicherzugriff erforderlich",
+                                strings.storagePermissionWarningTitle,
                                 fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.onErrorContainer
                             )
                         }
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            "Damit GitSyncer deine lokalen Obsidian-Vaults und Notizordner synchronisieren kann, wird die Berechtigung für Gerätedateien benötigt.",
+                            strings.storagePermissionWarningText,
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onErrorContainer
                         )
@@ -200,7 +200,7 @@ fun DashboardScreen(
                             },
                             colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
                         ) {
-                            Text("Berechtigung erteilen")
+                            Text(strings.grantPermission)
                         }
                     }
                 }
@@ -229,13 +229,13 @@ fun DashboardScreen(
                             )
                             Spacer(modifier = Modifier.height(16.dp))
                             Text(
-                                "Willkommen bei GitSyncer",
+                                strings.noRepositories,
                                 style = MaterialTheme.typography.titleLarge,
                                 fontWeight = FontWeight.Bold
                             )
                             Spacer(modifier = Modifier.height(8.dp))
                             Text(
-                                "Synchronisiere deine Ordner (z.B. Obsidian Vaults, Markdown-Notizen oder Code) zuverlässig mit GitHub, GitLab oder Gitea.",
+                                strings.noRepositoriesHint,
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -243,7 +243,7 @@ fun DashboardScreen(
                             Button(onClick = onAddRepo) {
                                 Icon(Icons.Default.Add, contentDescription = null)
                                 Spacer(modifier = Modifier.width(8.dp))
-                                Text("Erstes Repository verknüpfen")
+                                Text(strings.addRepository)
                             }
                         }
                     }
@@ -262,7 +262,7 @@ fun DashboardScreen(
                             onEdit = { onEditRepo(repo.id) },
                             onToggleEnabled = {
                                 val newState = repoStore.toggleRepositoryEnabled(repo.id)
-                                val msg = if (newState) "${repo.name} aktiviert" else "${repo.name} pausiert"
+                                val msg = if (newState) "${repo.name}: ${strings.statusSuccess}" else "${repo.name}: ${strings.repoPausedBadge}"
                                 Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
                             },
                             onSync = {
@@ -279,7 +279,7 @@ fun DashboardScreen(
                                     }
                                     if (res.success) {
                                         repoStore.updateRepoSyncStatus(repo.id, "SUCCESS")
-                                        val msg = if (repo.releaseApksOnly) "${repo.name}: ${res.message}" else "${repo.name}: Synchronisiert!"
+                                        val msg = if (repo.releaseApksOnly) "${repo.name}: ${res.message}" else "${repo.name}: ${strings.statusSuccess}!"
                                         Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
                                     } else {
                                         val status = if (res.conflicts.isNotEmpty()) "CONFLICT" else if (res.message.contains("abgebrochen", ignoreCase = true)) "CANCELLED" else "FAILED"
@@ -293,8 +293,8 @@ fun DashboardScreen(
                                 GitManager.cancelSync(repo.id, repo.localPath)
                                 activeSyncJobs[repo.id]?.cancel()
                                 activeSyncJobs.remove(repo.id)
-                                repoStore.updateRepoSyncStatus(repo.id, "CANCELLED", "Synchronisation durch Benutzer abgebrochen")
-                                Toast.makeText(context, "${repo.name}: Synchronisation abgebrochen", Toast.LENGTH_SHORT).show()
+                                repoStore.updateRepoSyncStatus(repo.id, "CANCELLED", strings.statusCancelled)
+                                Toast.makeText(context, "${repo.name}: ${strings.statusCancelled}", Toast.LENGTH_SHORT).show()
                             }
                         )
                     }
@@ -313,6 +313,8 @@ fun RepositoryCard(
     onSync: () -> Unit,
     onCancel: () -> Unit
 ) {
+    val strings = LocalAppStrings.current
+
     Card(
         modifier = Modifier
             .fillMaxWidth()
@@ -350,7 +352,7 @@ fun RepositoryCard(
                             color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.8f)
                         ) {
                             Text(
-                                text = "Pausiert",
+                                text = strings.repoPausedBadge,
                                 fontSize = 11.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.onErrorContainer,
@@ -364,7 +366,7 @@ fun RepositoryCard(
                             color = MaterialTheme.colorScheme.secondaryContainer
                         ) {
                             Text(
-                                text = "Nur APKs",
+                                text = strings.repoApksOnlyBadge,
                                 fontSize = 11.sp,
                                 fontWeight = FontWeight.SemiBold,
                                 color = MaterialTheme.colorScheme.onSecondaryContainer,
@@ -411,14 +413,14 @@ fun RepositoryCard(
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 val (statusColor, statusText, statusIcon) = if (!repo.isEnabled) {
-                    Triple(MaterialTheme.colorScheme.outline, "Pausiert (Sync inaktiv)", Icons.Default.PauseCircleFilled)
+                    Triple(MaterialTheme.colorScheme.outline, strings.statusPaused, Icons.Default.PauseCircleFilled)
                 } else when (repo.lastSyncStatus) {
-                    "SUCCESS" -> Triple(GitGreen, "Synchronisiert", Icons.Default.CheckCircle)
-                    "RUNNING" -> Triple(MaterialTheme.colorScheme.primary, "Synchronisiert...", Icons.Default.Sync)
-                    "CONFLICT" -> Triple(GitRed, "Merge-Konflikt", Icons.Default.Warning)
-                    "CANCELLED" -> Triple(MaterialTheme.colorScheme.error, "Abgebrochen", Icons.Default.Cancel)
-                    "FAILED" -> Triple(GitRed, "Fehler", Icons.Default.Error)
-                    else -> Triple(MaterialTheme.colorScheme.onSurfaceVariant, "Bereit", Icons.Default.CloudQueue)
+                    "SUCCESS" -> Triple(GitGreen, strings.statusSuccess, Icons.Default.CheckCircle)
+                    "RUNNING" -> Triple(MaterialTheme.colorScheme.primary, strings.statusRunning, Icons.Default.Sync)
+                    "CONFLICT" -> Triple(GitRed, strings.statusConflict, Icons.Default.Warning)
+                    "CANCELLED" -> Triple(MaterialTheme.colorScheme.error, strings.statusCancelled, Icons.Default.Cancel)
+                    "FAILED" -> Triple(GitRed, strings.statusFailed, Icons.Default.Error)
+                    else -> Triple(MaterialTheme.colorScheme.onSurfaceVariant, strings.info, Icons.Default.CloudQueue)
                 }
 
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -439,10 +441,10 @@ fun RepositoryCard(
 
                 val lastSyncTime = if (repo.lastSyncTimestamp > 0) {
                     SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date(repo.lastSyncTimestamp))
-                } else "Noch nie"
+                } else strings.lastSyncNever
 
                 Text(
-                    text = "Zuletzt: $lastSyncTime",
+                    text = "${strings.lastSyncPrefix} $lastSyncTime",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     fontSize = 11.sp
@@ -461,7 +463,7 @@ fun RepositoryCard(
             }
 
             Spacer(modifier = Modifier.height(12.dp))
-            Divider()
+            HorizontalDivider()
             Spacer(modifier = Modifier.height(8.dp))
 
             // Action Buttons
@@ -479,7 +481,7 @@ fun RepositoryCard(
                         ) {
                             CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.error)
                             Spacer(modifier = Modifier.width(6.dp))
-                            Text("Abbrechen")
+                            Text(strings.cancel)
                         }
                     } else {
                         Button(
@@ -493,7 +495,7 @@ fun RepositoryCard(
                                 modifier = Modifier.size(16.dp)
                             )
                             Spacer(modifier = Modifier.width(6.dp))
-                            Text(if (repo.releaseApksOnly) "APKs laden" else "Sync Jetzt")
+                            Text(if (repo.releaseApksOnly) strings.releaseDownload else strings.syncNow)
                         }
                     }
 
@@ -507,7 +509,7 @@ fun RepositoryCard(
                             modifier = Modifier.size(16.dp)
                         )
                         Spacer(modifier = Modifier.width(6.dp))
-                        Text(if (repo.releaseApksOnly) "Releases & APKs" else "Dateien & Diff")
+                        Text(if (repo.releaseApksOnly) "Releases & APKs" else strings.filesAndDiff)
                     }
                 }
 
@@ -515,12 +517,12 @@ fun RepositoryCard(
                     IconButton(onClick = onToggleEnabled) {
                         Icon(
                             if (repo.isEnabled) Icons.Default.PauseCircleOutline else Icons.Default.PlayCircleOutline,
-                            contentDescription = if (repo.isEnabled) "Repository pausieren" else "Repository aktivieren",
+                            contentDescription = if (repo.isEnabled) strings.pauseSync else strings.resumeSync,
                             tint = if (repo.isEnabled) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.primary
                         )
                     }
                     IconButton(onClick = onEdit) {
-                        Icon(Icons.Default.Tune, contentDescription = "Konfigurieren")
+                        Icon(Icons.Default.Tune, contentDescription = strings.edit)
                     }
                 }
             }

@@ -23,6 +23,7 @@ import androidx.compose.ui.unit.sp
 import de.fisch981.gitsyncer.data.RepositoryStore
 import de.fisch981.gitsyncer.model.SshKeyEntry
 import de.fisch981.gitsyncer.ssh.SshKeyManager
+import de.fisch981.gitsyncer.ui.theme.LocalAppStrings
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -34,6 +35,7 @@ fun SshKeysScreen(
     val context = LocalContext.current
     val repoStore = remember { RepositoryStore.getInstance(context) }
     val sshKeys by repoStore.sshKeys.collectAsState()
+    val strings = LocalAppStrings.current
 
     var showGenerateDialog by remember { mutableStateOf(false) }
     var showImportDialog by remember { mutableStateOf(false) }
@@ -41,15 +43,15 @@ fun SshKeysScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("SSH Schlüssel") },
+                title = { Text(strings.sshKeysTitle) },
                 navigationIcon = {
                     IconButton(onClick = onNavigateBack) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = "Zurück")
+                        Icon(Icons.Default.ArrowBack, contentDescription = strings.back)
                     }
                 },
                 actions = {
                     IconButton(onClick = { showImportDialog = true }) {
-                        Icon(Icons.Default.FileDownload, contentDescription = "Importieren")
+                        Icon(Icons.Default.FileDownload, contentDescription = strings.importSshKey)
                     }
                 }
             )
@@ -59,7 +61,7 @@ fun SshKeysScreen(
                 onClick = { showGenerateDialog = true },
                 containerColor = MaterialTheme.colorScheme.primary
             ) {
-                Icon(Icons.Default.Add, contentDescription = "Neuer SSH Schlüssel")
+                Icon(Icons.Default.Add, contentDescription = strings.generateSshKey)
             }
         }
     ) { padding ->
@@ -80,13 +82,13 @@ fun SshKeysScreen(
                     )
                     Spacer(modifier = Modifier.height(16.dp))
                     Text(
-                        "Keine SSH-Schlüssel vorhanden",
+                        strings.noSshKeys,
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
-                        "Erstelle oder importiere einen Schlüssel, um Repositories sicher per SSH (git@github.com:...) zu synchronisieren.",
+                        "SSH Keys",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(horizontal = 16.dp)
@@ -95,7 +97,7 @@ fun SshKeysScreen(
                     Button(onClick = { showGenerateDialog = true }) {
                         Icon(Icons.Default.Add, contentDescription = null)
                         Spacer(modifier = Modifier.width(8.dp))
-                        Text("Schlüssel generieren")
+                        Text(strings.generateSshKey)
                     }
                 }
             }
@@ -114,7 +116,7 @@ fun SshKeysScreen(
                             val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                             val clip = ClipData.newPlainText("SSH Public Key", key.publicKey)
                             clipboard.setPrimaryClip(clip)
-                            Toast.makeText(context, "Public Key kopiert! Füge ihn in GitHub ein.", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(context, strings.publicKeyCopied, Toast.LENGTH_SHORT).show()
                         },
                         onDelete = {
                             repoStore.deleteSshKey(key.id)

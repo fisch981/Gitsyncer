@@ -24,8 +24,11 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import de.fisch981.gitsyncer.data.RepositoryStore
 import de.fisch981.gitsyncer.ui.screens.*
 import de.fisch981.gitsyncer.ui.theme.GitSyncerTheme
+import de.fisch981.gitsyncer.ui.theme.LocalAppStrings
+import de.fisch981.gitsyncer.ui.theme.getAppStrings
 import java.io.File
 
 class MainActivity : ComponentActivity() {
@@ -53,12 +56,18 @@ class MainActivity : ComponentActivity() {
         }
 
         setContent {
-            GitSyncerTheme {
-                Surface(
-                    modifier = Modifier.fillMaxSize(),
-                    color = MaterialTheme.colorScheme.background
-                ) {
-                    GitSyncerNavigation(pendingRoute = pendingRoute)
+            val repoStore = remember { RepositoryStore.getInstance(applicationContext) }
+            val appLanguage by repoStore.appLanguage.collectAsState()
+            val strings = remember(appLanguage) { getAppStrings(appLanguage) }
+
+            CompositionLocalProvider(LocalAppStrings provides strings) {
+                GitSyncerTheme {
+                    Surface(
+                        modifier = Modifier.fillMaxSize(),
+                        color = MaterialTheme.colorScheme.background
+                    ) {
+                        GitSyncerNavigation(pendingRoute = pendingRoute)
+                    }
                 }
             }
         }

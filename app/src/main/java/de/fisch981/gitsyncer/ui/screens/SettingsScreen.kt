@@ -26,10 +26,12 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import de.fisch981.gitsyncer.data.GitHubApiClient
 import de.fisch981.gitsyncer.data.RepositoryStore
 import de.fisch981.gitsyncer.ui.theme.GitGreen
 import de.fisch981.gitsyncer.ui.theme.GitRed
+import de.fisch981.gitsyncer.ui.theme.LocalAppStrings
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -42,21 +44,24 @@ fun SettingsScreen(
     val scrollState = rememberScrollState()
     val repoStore = remember { RepositoryStore.getInstance(context) }
     val api = remember { GitHubApiClient() }
+    val strings = LocalAppStrings.current
 
     val savedToken by repoStore.githubToken.collectAsState()
     val savedUser by repoStore.githubUser.collectAsState()
     val savedBaseDir by repoStore.defaultBaseDir.collectAsState()
+    val currentLang by repoStore.appLanguage.collectAsState()
 
     var tokenInput by remember(savedToken) { mutableStateOf(savedToken) }
-    var baseDirInput by remember(savedBaseDir) { mutableStateOf(savedBaseDir) }
     var isPasswordVisible by remember { mutableStateOf(false) }
-    var isCheckingGithub by remember { mutableStateOf(false) }
+    var isTestingToken by remember { mutableStateOf(false) }
     var githubStatusMessage by remember { mutableStateOf<String?>(null) }
     var isGithubSuccess by remember { mutableStateOf(false) }
 
+    var baseDirInput by remember(savedBaseDir) { mutableStateOf(savedBaseDir) }
+
     val folderPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocumentTree()
-    ) { uri: Uri? ->
+    ) { uri ->
         if (uri != null) {
             val path = uri.path?.let { p ->
                 if (p.contains("primary:")) {
@@ -67,7 +72,7 @@ fun SettingsScreen(
             } ?: uri.toString()
             baseDirInput = path
             repoStore.setDefaultBaseDir(path)
-            Toast.makeText(context, "Basisverzeichnis gespeichert", Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, strings.save, Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -83,10 +88,10 @@ fun SettingsScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Einstellungen") },
+                title = { Text(strings.settingsTitle) },
                 navigationIcon = {
                     IconButton(onClick = onNavigateBack) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = "Zurück")
+                        Icon(Icons.Default.ArrowBack, contentDescription = strings.back)
                     }
                 }
             )
@@ -100,6 +105,46 @@ fun SettingsScreen(
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
+            // Language Selection Card
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+            ) {
+                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.Language, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(strings.languageSectionTitle, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
+                    }
+
+                    Text(
+                        strings.languageSectionDesc,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    val languageOptions = listOf(
+                        "system" to strings.languageSystem,
+                        "de" to strings.languageGerman,
+                        "en" to strings.languageEnglish
+                    )
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        languageOptions.forEach { (key, label) ->
+                            val isSelected = currentLang == key
+                            FilterChip(
+                                selected = isSelected,
+                                onClick = { repoStore.setAppLanguage(key) },
+                                label = { Text(label, fontSize = 12.sp) }
+                            )
+                        }
+                    }
+                }
+            }
+
             // Central GitHub Credentials Card
             Card(
                 modifier = Modifier.fillMaxWidth(),
@@ -109,11 +154,11 @@ fun SettingsScreen(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(Icons.Default.AccountCircle, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
                         Spacer(modifier = Modifier.width(8.dp))
-                        Text("Zentraler GitHub Account", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
+                        Text(strings.githubAccountSectionTitle, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
                     }
 
                     Text(
-                        "Hinterlege dein GitHub-Token einmalig hier. Es wird automatisch für alle neuen Repositories verwendet und liest deine Repositories direkt aus GitHub aus.",
+                        strings.githubAccountSectionDesc,
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -121,7 +166,7 @@ fun SettingsScreen(
                     OutlinedTextField(
                         value = tokenInput,
                         onValueChange = { tokenInput = it },
-                        label = { Text("GitHub Personal Access Token (PAT)") },
+                        label = { Text(strings.githubTokenLabel) },
                         placeholder = { Text("ghp_...") },
                         visualTransformation = if (isPasswordVisible) VisualTransformation.None else PasswordVisualTransformation(),
                         trailingIcon = {
@@ -133,11 +178,10 @@ fun SettingsScreen(
                                         val pasted = clip.getItemAt(0).text?.toString() ?: ""
                                         if (pasted.isNotBlank()) {
                                             tokenInput = pasted.trim()
-                                            Toast.makeText(context, "Eingefügt", Toast.LENGTH_SHORT).show()
                                         }
                                     }
                                 }) {
-                                    Icon(Icons.Default.ContentPaste, contentDescription = "Einfügen")
+                                    Icon(Icons.Default.ContentPaste, contentDescription = strings.copy)
                                 }
                                 IconButton(onClick = { isPasswordVisible = !isPasswordVisible }) {
                                     Icon(
@@ -151,51 +195,55 @@ fun SettingsScreen(
                         modifier = Modifier.fillMaxWidth()
                     )
 
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
                         Button(
                             onClick = {
                                 if (tokenInput.isBlank()) {
-                                    Toast.makeText(context, "Bitte Token eingeben", Toast.LENGTH_SHORT).show()
+                                    Toast.makeText(context, strings.githubTokenHint, Toast.LENGTH_SHORT).show()
                                     return@Button
                                 }
-                                isCheckingGithub = true
+                                isTestingToken = true
                                 githubStatusMessage = null
                                 coroutineScope.launch {
                                     val result = api.getUser(tokenInput.trim())
-                                    isCheckingGithub = false
+                                    isTestingToken = false
                                     result.onSuccess { user ->
-                                        repoStore.setGithubCredentials(tokenInput.trim(), user.login)
                                         isGithubSuccess = true
-                                        githubStatusMessage = "Erfolgreich verbunden als @${user.login}!"
-                                        Toast.makeText(context, "GitHub Account gespeichert!", Toast.LENGTH_SHORT).show()
+                                        githubStatusMessage = "${strings.tokenValid} @${user.login} (${user.name ?: ""})"
+                                        repoStore.setGithubCredentials(tokenInput.trim(), user.login)
                                     }.onFailure { err ->
                                         isGithubSuccess = false
-                                        githubStatusMessage = "Verbindungsfehler: ${err.localizedMessage}"
+                                        githubStatusMessage = err.localizedMessage ?: strings.error
                                     }
                                 }
                             },
-                            modifier = Modifier.weight(1f),
-                            enabled = !isCheckingGithub
+                            enabled = !isTestingToken,
+                            modifier = Modifier.weight(1f)
                         ) {
-                            if (isCheckingGithub) {
-                                CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
-                            } else {
-                                Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(18.dp))
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text("Verbindung testen & Speichern")
+                            if (isTestingToken) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(18.dp),
+                                    strokeWidth = 2.dp,
+                                    color = MaterialTheme.colorScheme.onPrimary
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
                             }
+                            Text(strings.testAndSave)
                         }
 
                         if (savedToken.isNotBlank()) {
                             OutlinedButton(
                                 onClick = {
-                                    tokenInput = ""
                                     repoStore.setGithubCredentials("", "")
+                                    tokenInput = ""
                                     githubStatusMessage = null
-                                    Toast.makeText(context, "Zugangsdaten entfernt", Toast.LENGTH_SHORT).show()
+                                    Toast.makeText(context, strings.removeToken, Toast.LENGTH_SHORT).show()
                                 }
                             ) {
-                                Icon(Icons.Default.DeleteOutline, contentDescription = "Löschen", tint = MaterialTheme.colorScheme.error)
+                                Icon(Icons.Default.DeleteOutline, contentDescription = strings.delete, tint = MaterialTheme.colorScheme.error)
                             }
                         }
                     }
@@ -211,7 +259,7 @@ fun SettingsScreen(
                     ) {
                         Icon(Icons.Default.OpenInBrowser, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(modifier = Modifier.width(6.dp))
-                        Text("Neues Token bei GitHub im Browser erstellen")
+                        Text(strings.createTokenInBrowser)
                     }
 
                     AnimatedVisibility(visible = githubStatusMessage != null || savedUser.isNotBlank()) {
@@ -232,7 +280,7 @@ fun SettingsScreen(
                                 )
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Text(
-                                    text = githubStatusMessage ?: "Verbunden als @$savedUser",
+                                    text = githubStatusMessage ?: "${strings.tokenValid} @$savedUser",
                                     color = if (isGithubSuccess || savedUser.isNotBlank()) GitGreen else GitRed,
                                     style = MaterialTheme.typography.bodySmall,
                                     fontWeight = FontWeight.SemiBold
@@ -249,11 +297,11 @@ fun SettingsScreen(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(Icons.Default.Folder, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
                         Spacer(modifier = Modifier.width(8.dp))
-                        Text("Standard-Basisverzeichnis", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
+                        Text(strings.defaultBaseDirTitle, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
                     }
 
                     Text(
-                        "In diesem Basisverzeichnis werden neue Repositories automatisch als eigener Unterordner angelegt (z. B. <Basisverzeichnis>/<RepoName>).",
+                        strings.defaultBaseDirDesc,
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -264,10 +312,10 @@ fun SettingsScreen(
                             baseDirInput = it
                             repoStore.setDefaultBaseDir(it)
                         },
-                        label = { Text("Basis-Ordnerpfad") },
+                        label = { Text(strings.defaultBaseDirTitle) },
                         trailingIcon = {
                             IconButton(onClick = { folderPickerLauncher.launch(null) }) {
-                                Icon(Icons.Default.FolderOpen, contentDescription = "Ordner wählen")
+                                Icon(Icons.Default.FolderOpen, contentDescription = strings.chooseFolder)
                             }
                         },
                         singleLine = true,
@@ -277,11 +325,11 @@ fun SettingsScreen(
                     Button(
                         onClick = {
                             repoStore.setDefaultBaseDir(baseDirInput)
-                            Toast.makeText(context, "Basisverzeichnis gespeichert!", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(context, strings.save, Toast.LENGTH_SHORT).show()
                         },
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Text("Pfad speichern")
+                        Text(strings.save)
                     }
                 }
             }
@@ -289,7 +337,7 @@ fun SettingsScreen(
             // System Permissions Card
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text("Berechtigungen & Hintergrundbetrieb", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
+                    Text(strings.systemIntegrationsTitle, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
 
                     // Storage
                     Row(
@@ -298,9 +346,9 @@ fun SettingsScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
-                            Text("Vollständiger Speicherzugriff", fontWeight = FontWeight.SemiBold)
+                            Text(strings.storageAccessAllFiles, fontWeight = FontWeight.SemiBold)
                             Text(
-                                if (hasStoragePermission) "Erteilt (Zugriff auf alle Vault-Ordner aktiv)" else "Nicht erteilt",
+                                if (hasStoragePermission) strings.storageAccessGranted else strings.storageAccessNotGranted,
                                 color = if (hasStoragePermission) GitGreen else MaterialTheme.colorScheme.error,
                                 style = MaterialTheme.typography.bodySmall
                             )
@@ -317,7 +365,7 @@ fun SettingsScreen(
                                     }
                                 }
                             ) {
-                                Text("Aktivieren")
+                                Text(strings.allow)
                             }
                         }
                     }
@@ -331,9 +379,9 @@ fun SettingsScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
-                            Text("Akku-Optimierung ignorieren", fontWeight = FontWeight.SemiBold)
+                            Text(strings.batteryOptimizationTitle, fontWeight = FontWeight.SemiBold)
                             Text(
-                                if (isIgnoringBatteryOptimizations) "Ausgenommen (Zuverlässiger Hintergrundsync)" else "Nicht ausgenommen (Android kann Sync verzögern)",
+                                if (isIgnoringBatteryOptimizations) strings.batteryOptimizationIgnored else strings.batteryOptimizationNotIgnored,
                                 color = if (isIgnoringBatteryOptimizations) GitGreen else MaterialTheme.colorScheme.onSurfaceVariant,
                                 style = MaterialTheme.typography.bodySmall
                             )
@@ -350,7 +398,7 @@ fun SettingsScreen(
                                     }
                                 }
                             ) {
-                                Text("Erlauben")
+                                Text(strings.allow)
                             }
                         }
                     }
@@ -360,13 +408,9 @@ fun SettingsScreen(
             // Quick Settings Tile guide
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Schnell-Einstellungen Kachel (Quick Settings)", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
+                    Text(strings.quickSettingsTileTitle, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
                     Text(
-                        "Du kannst GitSyncer zu deiner Android-Benachrichtigungsleiste hinzufügen:\n" +
-                                "1. Ziehe die Statusleiste zweimal nach unten.\n" +
-                                "2. Tippe auf das Stift-Symbol (Bearbeiten).\n" +
-                                "3. Ziehe die Kachel 'Git Sync' in deine aktiven Kacheln.\n\n" +
-                                "So kannst du jederzeit mit einem einzigen Fingertipp alle Repositories synchronisieren!",
+                        strings.quickSettingsTileGuide,
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -376,11 +420,11 @@ fun SettingsScreen(
             // About Card
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text("Über GitSyncer", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
-                    Text("Version: ${de.fisch981.gitsyncer.BuildConfig.VERSION_NAME} (Build ${de.fisch981.gitsyncer.BuildConfig.VERSION_CODE})", style = MaterialTheme.typography.bodySmall)
-                    Text("Paketname: de.fisch981.gitsyncer", style = MaterialTheme.typography.bodySmall)
-                    Text("Engine: Eclipse JGit 6.8 & JSch SSH Provider", style = MaterialTheme.typography.bodySmall)
-                    Text("Entwickelt für: fisch981", style = MaterialTheme.typography.bodySmall)
+                    Text(strings.aboutTitle, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
+                    Text("${strings.versionLabel} ${de.fisch981.gitsyncer.BuildConfig.VERSION_NAME} (Build ${de.fisch981.gitsyncer.BuildConfig.VERSION_CODE})", style = MaterialTheme.typography.bodySmall)
+                    Text("${strings.packageNameLabel} de.fisch981.gitsyncer", style = MaterialTheme.typography.bodySmall)
+                    Text(strings.gitEngineLabel, style = MaterialTheme.typography.bodySmall)
+                    Text(strings.developerLabel, style = MaterialTheme.typography.bodySmall)
                 }
             }
         }
