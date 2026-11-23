@@ -59,7 +59,6 @@ fun DashboardScreen(
     var isSyncingAll by remember { mutableStateOf(false) }
     var syncAllJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
     val activeSyncJobs = remember { mutableStateMapOf<String, kotlinx.coroutines.Job>() }
-    var showLanguageDialog by remember { mutableStateOf(false) }
 
     // Check storage permission
     val hasStoragePermission = remember {
@@ -142,9 +141,6 @@ fun DashboardScreen(
                             Icon(Icons.Default.Sync, contentDescription = strings.syncAllActive)
                         }
                     }
-                    IconButton(onClick = { showLanguageDialog = true }) {
-                        Icon(Icons.Default.Language, contentDescription = strings.languageSectionTitle)
-                    }
                     IconButton(onClick = onNavigateToSshKeys) {
                         Icon(Icons.Default.VpnKey, contentDescription = strings.sshKeysTitle)
                     }
@@ -163,51 +159,6 @@ fun DashboardScreen(
             }
         }
     ) { padding ->
-        if (showLanguageDialog) {
-            val currentLang by repoStore.appLanguage.collectAsState()
-            AlertDialog(
-                onDismissRequest = { showLanguageDialog = false },
-                icon = { Icon(Icons.Default.Language, contentDescription = null) },
-                title = { Text(strings.languageSectionTitle) },
-                text = {
-                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        val languageOptions = listOf(
-                            "system" to strings.languageSystem,
-                            "de" to strings.languageGerman,
-                            "en" to strings.languageEnglish
-                        )
-                        languageOptions.forEach { (key, label) ->
-                            val isSelected = currentLang == key
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clickable {
-                                        repoStore.setAppLanguage(key)
-                                        showLanguageDialog = false
-                                    }
-                                    .padding(vertical = 10.dp, horizontal = 4.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                RadioButton(
-                                    selected = isSelected,
-                                    onClick = {
-                                        repoStore.setAppLanguage(key)
-                                        showLanguageDialog = false
-                                    }
-                                )
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text(label, style = MaterialTheme.typography.bodyLarge)
-                            }
-                        }
-                    }
-                },
-                confirmButton = {
-                    TextButton(onClick = { showLanguageDialog = false }) {
-                        Text(strings.close)
-                    }
-                }
-            )
-        }
         Column(
             modifier = Modifier
                 .fillMaxSize()

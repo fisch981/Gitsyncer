@@ -5,6 +5,11 @@ Alle nennenswerten Änderungen an diesem Projekt werden in dieser Datei dokument
 
 ---
 
+## [1.4.1] - 2026-11-23
+
+### Geändert / Hinzugefügt
+- Sprachauswahl ausschließlich in den Einstellungen platziert (Dashboard-Leiste bereinigt)
+
 ## [1.4.0] - 2026-11-23
 
 ### Geändert / Hinzugefügt
