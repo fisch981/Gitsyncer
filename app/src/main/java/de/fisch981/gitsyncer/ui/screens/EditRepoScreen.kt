@@ -4,11 +4,9 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
-import android.os.Environment
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -37,10 +35,10 @@ import de.fisch981.gitsyncer.git.GitManager
 import de.fisch981.gitsyncer.model.*
 import de.fisch981.gitsyncer.sync.SyncScheduler
 import de.fisch981.gitsyncer.ui.theme.GitGreen
+import de.fisch981.gitsyncer.ui.theme.LocalAppStrings
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.io.File
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -54,6 +52,7 @@ fun EditRepoScreen(
     val repoStore = remember { RepositoryStore.getInstance(context) }
     val gitManager = remember { GitManager(context) }
     val api = remember { GitHubApiClient() }
+    val strings = LocalAppStrings.current
 
     val sshKeys by repoStore.sshKeys.collectAsState()
     val globalToken by repoStore.githubToken.collectAsState()
@@ -133,10 +132,10 @@ fun EditRepoScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(if (existingRepo == null) "Neues Repository" else "Repository bearbeiten") },
+                title = { Text(if (existingRepo == null) strings.addRepoTitle else strings.editRepoTitle) },
                 navigationIcon = {
                     IconButton(onClick = onNavigateBack) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = "Zurück")
+                        Icon(Icons.Default.ArrowBack, contentDescription = strings.back)
                     }
                 },
                 actions = {
@@ -145,11 +144,11 @@ fun EditRepoScreen(
                             onClick = {
                                 SyncScheduler.cancelRepo(context, existingRepo.id)
                                 repoStore.deleteRepository(existingRepo.id)
-                                Toast.makeText(context, "Repository gelöscht", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(context, strings.repoDeleted, Toast.LENGTH_SHORT).show()
                                 onNavigateBack()
                             }
                         ) {
-                            Icon(Icons.Default.Delete, contentDescription = "Löschen", tint = MaterialTheme.colorScheme.error)
+                            Icon(Icons.Default.Delete, contentDescription = strings.delete, tint = MaterialTheme.colorScheme.error)
                         }
                     }
                 }
@@ -182,7 +181,7 @@ fun EditRepoScreen(
                             )
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(
-                                "Aus GitHub importieren",
+                                strings.githubImportTitle,
                                 fontWeight = FontWeight.Bold,
                                 style = MaterialTheme.typography.titleMedium,
                                 color = MaterialTheme.colorScheme.onPrimaryContainer
@@ -191,9 +190,9 @@ fun EditRepoScreen(
 
                         Text(
                             if (globalToken.isNotBlank()) {
-                                "Mit deinem hinterlegten GitHub-Account (@${globalUser.ifBlank { "User" }}) verbunden. Wähle ein Repository aus deiner Liste:"
+                                String.format(strings.githubConnectedDesc, globalUser.ifBlank { "User" })
                             } else {
-                                "Hinterlege dein GitHub-Token, um alle deine Repositories direkt auf Knopfdruck anzuzeigen und ohne Tippen zu übernehmen."
+                                strings.githubNotConnectedDesc
                             },
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onPrimaryContainer
@@ -203,7 +202,7 @@ fun EditRepoScreen(
                             onClick = {
                                 val tokenToUse = if (tokenOrPassword.isNotBlank()) tokenOrPassword else globalToken
                                 if (tokenToUse.isBlank()) {
-                                    Toast.makeText(context, "Bitte zuerst ein GitHub-Token hinterlegen!", Toast.LENGTH_LONG).show()
+                                    Toast.makeText(context, strings.githubTokenRequiredHint, Toast.LENGTH_LONG).show()
                                     return@Button
                                 }
                                 showGithubPicker = true
@@ -214,7 +213,7 @@ fun EditRepoScreen(
                                     result.onSuccess { list ->
                                         githubRepos = list
                                     }.onFailure { err ->
-                                        Toast.makeText(context, "Fehler beim Laden: ${err.localizedMessage}", Toast.LENGTH_LONG).show()
+                                        Toast.makeText(context, "${strings.error}: ${err.localizedMessage}", Toast.LENGTH_LONG).show()
                                     }
                                 }
                             },
@@ -226,7 +225,7 @@ fun EditRepoScreen(
                         ) {
                             Icon(Icons.Default.List, contentDescription = null, modifier = Modifier.size(18.dp))
                             Spacer(modifier = Modifier.width(8.dp))
-                            Text("GitHub Repositories laden & auswählen")
+                            Text(strings.githubLoadReposButton)
                         }
                     }
                 }
@@ -235,7 +234,7 @@ fun EditRepoScreen(
             // General Info Card
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text("Repository Basisdaten", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Text(strings.generalInfoTitle, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
 
                     OutlinedTextField(
                         value = name,
@@ -245,7 +244,7 @@ fun EditRepoScreen(
                                 localPath = if (it.isNotBlank()) "$defaultBaseDir/$it" else defaultBaseDir
                             }
                         },
-                        label = { Text("Name (z. B. Obsidian Vault)") },
+                        label = { Text(strings.repoNameLabel) },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )
@@ -258,7 +257,7 @@ fun EditRepoScreen(
                                 authType = AuthType.SSH_KEY
                             }
                         },
-                        label = { Text("Remote Git URL (HTTPS oder SSH)") },
+                        label = { Text(strings.repoRemoteUrlLabel) },
                         placeholder = { Text("https://github.com/user/notes.git") },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
@@ -267,10 +266,10 @@ fun EditRepoScreen(
                     OutlinedTextField(
                         value = localPath,
                         onValueChange = { localPath = it },
-                        label = { Text("Lokaler Ordnerpfad") },
+                        label = { Text(strings.repoLocalPathLabel) },
                         trailingIcon = {
                             IconButton(onClick = { folderPickerLauncher.launch(null) }) {
-                                Icon(Icons.Default.FolderOpen, contentDescription = "Ordner wählen")
+                                Icon(Icons.Default.FolderOpen, contentDescription = strings.chooseFolder)
                             }
                         },
                         singleLine = true,
@@ -292,14 +291,14 @@ fun EditRepoScreen(
                                 horizontalArrangement = Arrangement.SpaceBetween
                             ) {
                                 Text(
-                                    "Achtung: Dies ist das Basis-Verzeichnis! Repositories sollten in einem eigenen Unterordner liegen.",
+                                    strings.baseDirWarning,
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onErrorContainer,
                                     modifier = Modifier.weight(1f)
                                 )
                                 if (name.isNotBlank()) {
                                     TextButton(onClick = { localPath = "$cleanBaseDir/${name.trim()}" }) {
-                                        Text("/$name anfügen")
+                                        Text(String.format(strings.appendSubfolder, name.trim()))
                                     }
                                 }
                             }
@@ -310,7 +309,7 @@ fun EditRepoScreen(
                         OutlinedTextField(
                             value = branch,
                             onValueChange = { branch = it },
-                            label = { Text("Branch") },
+                            label = { Text(strings.repoBranchLabel) },
                             singleLine = true,
                             modifier = Modifier.fillMaxWidth()
                         )
@@ -321,23 +320,23 @@ fun EditRepoScreen(
             // Authentication Card
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text("Authentifizierung", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Text(strings.authCardTitle, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
 
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         FilterChip(
                             selected = authType == AuthType.HTTPS_TOKEN,
                             onClick = { authType = AuthType.HTTPS_TOKEN },
-                            label = { Text("HTTPS Token") }
+                            label = { Text(strings.authHttpsToken) }
                         )
                         FilterChip(
                             selected = authType == AuthType.SSH_KEY,
                             onClick = { authType = AuthType.SSH_KEY },
-                            label = { Text("SSH Key") }
+                            label = { Text(strings.authSshKey) }
                         )
                         FilterChip(
                             selected = authType == AuthType.HTTPS_CREDENTIALS,
                             onClick = { authType = AuthType.HTTPS_CREDENTIALS },
-                            label = { Text("User/Pass") }
+                            label = { Text(strings.authCredentials) }
                         )
                     }
 
@@ -346,7 +345,7 @@ fun EditRepoScreen(
                             OutlinedTextField(
                                 value = tokenOrPassword,
                                 onValueChange = { tokenOrPassword = it },
-                                label = { Text("Personal Access Token (PAT)") },
+                                label = { Text(strings.patLabel) },
                                 placeholder = { Text("ghp_... oder glpat-...") },
                                 visualTransformation = if (isPasswordVisible) VisualTransformation.None else PasswordVisualTransformation(),
                                 trailingIcon = {
@@ -358,11 +357,11 @@ fun EditRepoScreen(
                                                 val pasted = clip.getItemAt(0).text?.toString() ?: ""
                                                 if (pasted.isNotBlank()) {
                                                     tokenOrPassword = pasted.trim()
-                                                    Toast.makeText(context, "Aus Zwischenablage eingefügt", Toast.LENGTH_SHORT).show()
+                                                    Toast.makeText(context, strings.pastedFromClipboard, Toast.LENGTH_SHORT).show()
                                                 }
                                             }
                                         }) {
-                                            Icon(Icons.Default.ContentPaste, contentDescription = "Einfügen")
+                                            Icon(Icons.Default.ContentPaste, contentDescription = strings.paste)
                                         }
                                         IconButton(onClick = { isPasswordVisible = !isPasswordVisible }) {
                                             Icon(
@@ -381,12 +380,12 @@ fun EditRepoScreen(
                                     onClick = {
                                         tokenOrPassword = globalToken
                                         username = globalUser
-                                        Toast.makeText(context, "Zentrales GitHub Token übernommen", Toast.LENGTH_SHORT).show()
+                                        Toast.makeText(context, strings.centralTokenApplied, Toast.LENGTH_SHORT).show()
                                     }
                                 ) {
                                     Icon(Icons.Default.Sync, contentDescription = null, modifier = Modifier.size(16.dp))
                                     Spacer(modifier = Modifier.width(4.dp))
-                                    Text("Zentral hinterlegtes Token verwenden (@${globalUser.ifBlank { "GitHub" }})")
+                                    Text(String.format(strings.useCentralToken, globalUser.ifBlank { "GitHub" }))
                                 }
                             }
 
@@ -401,21 +400,21 @@ fun EditRepoScreen(
                             ) {
                                 Icon(Icons.Default.OpenInBrowser, contentDescription = null, modifier = Modifier.size(18.dp))
                                 Spacer(modifier = Modifier.width(8.dp))
-                                Text("GitHub Token im Browser erstellen (1-Klick)")
+                                Text(strings.createTokenBrowser)
                             }
                         }
                         AuthType.HTTPS_CREDENTIALS -> {
                             OutlinedTextField(
                                 value = username,
                                 onValueChange = { username = it },
-                                label = { Text("Benutzername") },
+                                label = { Text(strings.usernameLabel) },
                                 singleLine = true,
                                 modifier = Modifier.fillMaxWidth()
                             )
                             OutlinedTextField(
                                 value = tokenOrPassword,
                                 onValueChange = { tokenOrPassword = it },
-                                label = { Text("Passwort / Token") },
+                                label = { Text(strings.passwordLabel) },
                                 visualTransformation = if (isPasswordVisible) VisualTransformation.None else PasswordVisualTransformation(),
                                 trailingIcon = {
                                     IconButton(onClick = { isPasswordVisible = !isPasswordVisible }) {
@@ -436,7 +435,7 @@ fun EditRepoScreen(
                                     color = MaterialTheme.colorScheme.secondaryContainer
                                 ) {
                                     Text(
-                                        text = "Hinweis: Für GitHub Releases wird automatisch das HTTPS-Token (bzw. das zentrale GitHub-Token aus den Einstellungen) verwendet.",
+                                        text = strings.sshApkNotice,
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSecondaryContainer,
                                         modifier = Modifier.padding(10.dp)
@@ -445,7 +444,7 @@ fun EditRepoScreen(
                             }
                             if (sshKeys.isEmpty()) {
                                 Text(
-                                    "Noch keine SSH-Schlüssel hinterlegt.",
+                                    strings.noSshKeysHint,
                                     color = MaterialTheme.colorScheme.error,
                                     style = MaterialTheme.typography.bodySmall
                                 )
@@ -455,10 +454,10 @@ fun EditRepoScreen(
                                 ) {
                                     Icon(Icons.Default.Add, contentDescription = null)
                                     Spacer(modifier = Modifier.width(6.dp))
-                                    Text("SSH Schlüssel jetzt erstellen")
+                                    Text(strings.createSshKeyNow)
                                 }
                             } else {
-                                Text("Wähle einen SSH Schlüssel:", style = MaterialTheme.typography.bodyMedium)
+                                Text(strings.selectSshKey, style = MaterialTheme.typography.bodyMedium)
                                 sshKeys.forEach { key ->
                                     Row(
                                         verticalAlignment = Alignment.CenterVertically,
@@ -484,7 +483,7 @@ fun EditRepoScreen(
             // Sync Settings Card
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text("Synchronisations-Optionen", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Text(strings.syncOptionsTitle, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
 
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -492,8 +491,8 @@ fun EditRepoScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
-                            Text("Repository aktiv", fontWeight = FontWeight.SemiBold)
-                            Text("Pausierte Repositories werden von automatischen und manuellen Sammel-Syncs ausgenommen", style = MaterialTheme.typography.bodySmall)
+                            Text(strings.repoActive, fontWeight = FontWeight.SemiBold)
+                            Text(strings.repoActiveDesc, style = MaterialTheme.typography.bodySmall)
                         }
                         Switch(
                             checked = isEnabled,
@@ -507,9 +506,9 @@ fun EditRepoScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
-                            Text("Nur Release-APKs herunterladen", fontWeight = FontWeight.SemiBold)
+                            Text(strings.releaseApksOnlyLabel, fontWeight = FontWeight.SemiBold)
                             Text(
-                                "Lädt statt des gesamten Git-Repositories nur die .apk-Dateien aus dem neuesten GitHub Release in den Zielordner herunter (spart Speicher & Datenvolumen).",
+                                strings.releaseApksOnlyDesc,
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -526,8 +525,8 @@ fun EditRepoScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
-                            Text("Automatische Hintergrund-Sync", fontWeight = FontWeight.SemiBold)
-                            Text("Synchronisiert im Hintergrund per WorkManager", style = MaterialTheme.typography.bodySmall)
+                            Text(strings.autoSyncLabel, fontWeight = FontWeight.SemiBold)
+                            Text(strings.autoSyncDesc, style = MaterialTheme.typography.bodySmall)
                         }
                         Switch(
                             checked = autoSyncEnabled,
@@ -542,9 +541,9 @@ fun EditRepoScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
-                                Text("Shallow-Clone (Tiefe 1)", fontWeight = FontWeight.SemiBold)
+                                Text(strings.shallowCloneLabel, fontWeight = FontWeight.SemiBold)
                                 Text(
-                                    "Empfohlen: Lädt nur den aktuellen Stand herunter. Verhindert Speicherprobleme und Hänger bei großen Repositories mit Binärdateien/APKs (wie FolderGallery).",
+                                    strings.shallowCloneDesc,
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -557,7 +556,7 @@ fun EditRepoScreen(
                     }
 
                     if (autoSyncEnabled) {
-                        Text("Sync-Intervall:", style = MaterialTheme.typography.labelMedium)
+                        Text(strings.syncIntervalLabel, style = MaterialTheme.typography.labelMedium)
                         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                             val intervals = listOf(15 to "15m", 30 to "30m", 60 to "1h", 360 to "6h", 1440 to "24h")
                             intervals.forEach { (mins, label) ->
@@ -571,29 +570,29 @@ fun EditRepoScreen(
                     }
 
                     if (!releaseApksOnly) {
-                        Text("Richtung:", style = MaterialTheme.typography.labelMedium)
+                        Text(strings.syncDirectionLabel, style = MaterialTheme.typography.labelMedium)
                         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             FilterChip(
                                 selected = syncDirection == SyncDirection.TWO_WAY,
                                 onClick = { syncDirection = SyncDirection.TWO_WAY },
-                                label = { Text("Zwei-Wege") }
+                                label = { Text(strings.syncTwoWay) }
                             )
                             FilterChip(
                                 selected = syncDirection == SyncDirection.PUSH_ONLY,
                                 onClick = { syncDirection = SyncDirection.PUSH_ONLY },
-                                label = { Text("Nur Push") }
+                                label = { Text(strings.syncPushOnly) }
                             )
                             FilterChip(
                                 selected = syncDirection == SyncDirection.PULL_ONLY,
                                 onClick = { syncDirection = SyncDirection.PULL_ONLY },
-                                label = { Text("Nur Pull") }
+                                label = { Text(strings.syncPullOnly) }
                             )
                         }
 
                         OutlinedTextField(
                             value = autoCommitMessage,
                             onValueChange = { autoCommitMessage = it },
-                            label = { Text("Commit-Nachricht Template") },
+                            label = { Text(strings.commitMessageTemplateLabel) },
                             placeholder = { Text("Sync %timestamp%") },
                             singleLine = true,
                             modifier = Modifier.fillMaxWidth()
@@ -603,14 +602,14 @@ fun EditRepoScreen(
                             OutlinedTextField(
                                 value = authorName,
                                 onValueChange = { authorName = it },
-                                label = { Text("Git Author") },
+                                label = { Text(strings.gitAuthorLabel) },
                                 singleLine = true,
                                 modifier = Modifier.weight(1f)
                             )
                             OutlinedTextField(
                                 value = authorEmail,
                                 onValueChange = { authorEmail = it },
-                                label = { Text("Git Email") },
+                                label = { Text(strings.gitEmailLabel) },
                                 singleLine = true,
                                 modifier = Modifier.weight(1f)
                             )
@@ -630,7 +629,7 @@ fun EditRepoScreen(
                         horizontalArrangement = Arrangement.spacedBy(16.dp)
                     ) {
                         CircularProgressIndicator(modifier = Modifier.size(32.dp))
-                        Text(statusText.ifBlank { "Synchronisiere..." }, style = MaterialTheme.typography.bodyMedium)
+                        Text(statusText.ifBlank { strings.syncing }, style = MaterialTheme.typography.bodyMedium)
                     }
                 }
             }
@@ -673,7 +672,7 @@ fun EditRepoScreen(
             Button(
                 onClick = {
                     if (name.isBlank() || remoteUrl.isBlank() || localPath.isBlank()) {
-                        Toast.makeText(context, "Bitte alle Pflichtfelder ausfüllen!", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(context, strings.fillRequiredFields, Toast.LENGTH_SHORT).show()
                         return@Button
                     }
 
@@ -683,9 +682,9 @@ fun EditRepoScreen(
 
                     isCloning = true
                     statusText = if (updatedConfig.releaseApksOnly) {
-                        "Lade Release-APKs von GitHub..."
+                        strings.downloadingApks
                     } else {
-                        "Klone / Initialisiere Repository..."
+                        strings.cloningRepository
                     }
                     coroutineScope.launch {
                         val result = withContext(Dispatchers.IO) {
@@ -700,12 +699,12 @@ fun EditRepoScreen(
                         isCloning = false
                         if (result.success) {
                             repoStore.updateRepoSyncStatus(updatedConfig.id, "SUCCESS")
-                            val successMsg = if (updatedConfig.releaseApksOnly) result.message else "Repository erfolgreich eingerichtet!"
+                            val successMsg = if (updatedConfig.releaseApksOnly) result.message else strings.repoSetupSuccess
                             Toast.makeText(context, successMsg, Toast.LENGTH_SHORT).show()
                             onNavigateBack()
                         } else {
                             repoStore.updateRepoSyncStatus(updatedConfig.id, "FAILED", result.message)
-                            Toast.makeText(context, "Warnung: ${result.message}", Toast.LENGTH_LONG).show()
+                            Toast.makeText(context, "${strings.warning}: ${result.message}", Toast.LENGTH_LONG).show()
                             onNavigateBack()
                         }
                     }
@@ -715,25 +714,25 @@ fun EditRepoScreen(
             ) {
                 Icon(Icons.Default.Save, contentDescription = null)
                 Spacer(modifier = Modifier.width(8.dp))
-                Text("Speichern & Synchronisieren")
+                Text(strings.saveAndSync)
             }
 
             OutlinedButton(
                 onClick = {
                     if (name.isBlank() || remoteUrl.isBlank() || localPath.isBlank()) {
-                        Toast.makeText(context, "Bitte alle Pflichtfelder ausfüllen!", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(context, strings.fillRequiredFields, Toast.LENGTH_SHORT).show()
                         return@OutlinedButton
                     }
 
                     val updatedConfig = buildUpdatedConfig(preserveSyncState = true)
                     repoStore.saveRepository(updatedConfig)
                     SyncScheduler.scheduleRepo(context, updatedConfig)
-                    Toast.makeText(context, "Gespeichert", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(context, strings.saved, Toast.LENGTH_SHORT).show()
                     onNavigateBack()
                 },
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Text("Nur Speichern (ohne Sofort-Sync)")
+                Text(strings.saveOnly)
             }
         }
     }
@@ -762,9 +761,9 @@ fun EditRepoScreen(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text("GitHub Repositories auswählen", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                        Text(strings.githubSelectRepoTitle, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                         IconButton(onClick = { showGithubPicker = false }) {
-                            Icon(Icons.Default.Close, contentDescription = "Schließen")
+                            Icon(Icons.Default.Close, contentDescription = strings.close)
                         }
                     }
 
@@ -773,7 +772,7 @@ fun EditRepoScreen(
                     OutlinedTextField(
                         value = repoFilter,
                         onValueChange = { repoFilter = it },
-                        label = { Text("Repository suchen...") },
+                        label = { Text(strings.filterReposPlaceholder) },
                         leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
@@ -791,7 +790,7 @@ fun EditRepoScreen(
                             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                                 CircularProgressIndicator()
                                 Spacer(modifier = Modifier.height(8.dp))
-                                Text("Lade Repositories von GitHub...")
+                                Text(strings.loadingGithubRepos)
                             }
                         }
                     } else {
@@ -807,7 +806,7 @@ fun EditRepoScreen(
                                     .weight(1f),
                                 contentAlignment = Alignment.Center
                             ) {
-                                Text("Keine passenden Repositories gefunden")
+                                Text(strings.noMatchingReposFound)
                             }
                         } else {
                             LazyColumn(
@@ -831,7 +830,7 @@ fun EditRepoScreen(
                                                     username = globalUser
                                                 }
                                                 showGithubPicker = false
-                                                Toast.makeText(context, "'${repo.name}' übernommen!", Toast.LENGTH_SHORT).show()
+                                                Toast.makeText(context, String.format(strings.repoAppliedToast, repo.name), Toast.LENGTH_SHORT).show()
                                             }
                                     ) {
                                         Column(modifier = Modifier.padding(12.dp)) {

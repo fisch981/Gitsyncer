@@ -4,7 +4,6 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.widget.Toast
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -24,8 +23,6 @@ import de.fisch981.gitsyncer.data.RepositoryStore
 import de.fisch981.gitsyncer.model.SshKeyEntry
 import de.fisch981.gitsyncer.ssh.SshKeyManager
 import de.fisch981.gitsyncer.ui.theme.LocalAppStrings
-import java.text.SimpleDateFormat
-import java.util.*
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -88,7 +85,7 @@ fun SshKeysScreen(
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
-                        "SSH Keys",
+                        strings.noSshKeysDesc,
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(horizontal = 16.dp)
@@ -120,7 +117,7 @@ fun SshKeysScreen(
                         },
                         onDelete = {
                             repoStore.deleteSshKey(key.id)
-                            Toast.makeText(context, "Schlüssel gelöscht", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(context, strings.keyDeleted, Toast.LENGTH_SHORT).show()
                         }
                     )
                 }
@@ -139,7 +136,7 @@ fun SshKeysScreen(
                 }
                 repoStore.saveSshKey(newKey)
                 showGenerateDialog = false
-                Toast.makeText(context, "SSH Schlüssel erfolgreich erstellt!", Toast.LENGTH_SHORT).show()
+                Toast.makeText(context, strings.keyCreatedSuccess, Toast.LENGTH_SHORT).show()
             }
         )
     }
@@ -152,12 +149,12 @@ fun SshKeysScreen(
                     name = name,
                     publicKey = pubKey,
                     privateKey = privKey,
-                    keyType = "Importiert",
+                    keyType = "Imported",
                     createdTimestamp = System.currentTimeMillis()
                 )
                 repoStore.saveSshKey(entry)
                 showImportDialog = false
-                Toast.makeText(context, "Schlüssel importiert!", Toast.LENGTH_SHORT).show()
+                Toast.makeText(context, strings.keyImportedSuccess, Toast.LENGTH_SHORT).show()
             }
         )
     }
@@ -169,6 +166,8 @@ fun SshKeyCard(
     onCopyPublic: () -> Unit,
     onDelete: () -> Unit
 ) {
+    val strings = LocalAppStrings.current
+
     Card(
         modifier = Modifier.fillMaxWidth(),
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
@@ -200,7 +199,7 @@ fun SshKeyCard(
                 IconButton(onClick = onDelete) {
                     Icon(
                         Icons.Default.DeleteOutline,
-                        contentDescription = "Löschen",
+                        contentDescription = strings.delete,
                         tint = MaterialTheme.colorScheme.error
                     )
                 }
@@ -209,7 +208,7 @@ fun SshKeyCard(
             Spacer(modifier = Modifier.height(12.dp))
 
             Text(
-                "Öffentlicher Schlüssel (Public Key):",
+                strings.publicKeyTitle,
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -241,7 +240,7 @@ fun SshKeyCard(
             ) {
                 Icon(Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.size(16.dp))
                 Spacer(modifier = Modifier.width(6.dp))
-                Text("Public Key kopieren (für GitHub / GitLab)")
+                Text(strings.copyPublicKeyHint)
             }
         }
     }
@@ -252,23 +251,24 @@ fun GenerateKeyDialog(
     onDismiss: () -> Unit,
     onGenerate: (name: String, type: String) -> Unit
 ) {
+    val strings = LocalAppStrings.current
     var name by remember { mutableStateOf("Android Device") }
     var selectedType by remember { mutableStateOf("RSA") }
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Neuen SSH-Schlüssel generieren") },
+        title = { Text(strings.generateDialogTitle) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 OutlinedTextField(
                     value = name,
                     onValueChange = { name = it },
-                    label = { Text("Schlüssel-Bezeichnung") },
+                    label = { Text(strings.keyNameLabel) },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
 
-                Text("Schlüssel-Typ:", style = MaterialTheme.typography.labelMedium)
+                Text(strings.keyTypeLabel, style = MaterialTheme.typography.labelMedium)
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     FilterChip(
                         selected = selectedType == "RSA",
@@ -289,11 +289,11 @@ fun GenerateKeyDialog(
                     if (name.isNotBlank()) onGenerate(name.trim(), selectedType)
                 }
             ) {
-                Text("Generieren")
+                Text(strings.generateAction)
             }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Abbrechen") }
+            TextButton(onClick = onDismiss) { Text(strings.cancel) }
         }
     )
 }
@@ -303,33 +303,34 @@ fun ImportKeyDialog(
     onDismiss: () -> Unit,
     onImport: (name: String, privKey: String, pubKey: String) -> Unit
 ) {
+    val strings = LocalAppStrings.current
     var name by remember { mutableStateOf("") }
     var privKey by remember { mutableStateOf("") }
     var pubKey by remember { mutableStateOf("") }
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("SSH-Schlüssel importieren") },
+        title = { Text(strings.importDialogTitle) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 OutlinedTextField(
                     value = name,
                     onValueChange = { name = it },
-                    label = { Text("Name / Bezeichnung") },
+                    label = { Text(strings.keyNameLabel) },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
                 OutlinedTextField(
                     value = privKey,
                     onValueChange = { privKey = it },
-                    label = { Text("Privater Schlüssel (PEM)") },
+                    label = { Text(strings.privateKeyLabel) },
                     modifier = Modifier.fillMaxWidth().height(100.dp),
                     placeholder = { Text("-----BEGIN RSA PRIVATE KEY-----...") }
                 )
                 OutlinedTextField(
                     value = pubKey,
                     onValueChange = { pubKey = it },
-                    label = { Text("Öffentlicher Schlüssel (OpenSSH)") },
+                    label = { Text(strings.publicKeyLabel) },
                     modifier = Modifier.fillMaxWidth().height(80.dp),
                     placeholder = { Text("ssh-rsa AAAA...") }
                 )
@@ -343,11 +344,11 @@ fun ImportKeyDialog(
                     }
                 }
             ) {
-                Text("Importieren")
+                Text(strings.importAction)
             }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Abbrechen") }
+            TextButton(onClick = onDismiss) { Text(strings.cancel) }
         }
     )
 }

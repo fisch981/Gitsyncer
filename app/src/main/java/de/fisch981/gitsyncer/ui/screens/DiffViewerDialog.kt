@@ -16,6 +16,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import de.fisch981.gitsyncer.ui.theme.GitGreen
 import de.fisch981.gitsyncer.ui.theme.GitRed
+import de.fisch981.gitsyncer.ui.theme.LocalAppStrings
 
 @Composable
 fun DiffViewerDialog(
@@ -25,6 +26,8 @@ fun DiffViewerDialog(
     onDismiss: () -> Unit,
     onResolveConflict: ((useLocal: Boolean) -> Unit)? = null
 ) {
+    val strings = LocalAppStrings.current
+
     Dialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false)
@@ -43,14 +46,14 @@ fun DiffViewerDialog(
                     .padding(16.dp)
             ) {
                 Text(
-                    text = "Diff: $filePath",
+                    text = String.format(strings.diffTitle, filePath),
                     style = MaterialTheme.typography.titleMedium,
                     modifier = Modifier.padding(bottom = 8.dp)
                 )
 
                 if (isConflict) {
                     Text(
-                        text = "Konflikt erkannt! Wähle, welche Version behalten werden soll:",
+                        text = strings.conflictDetected,
                         color = GitRed,
                         style = MaterialTheme.typography.bodySmall,
                         modifier = Modifier.padding(bottom = 8.dp)
@@ -65,14 +68,14 @@ fun DiffViewerDialog(
                             colors = ButtonDefaults.buttonColors(containerColor = GitGreen),
                             modifier = Modifier.weight(1f)
                         ) {
-                            Text("Lokal behalten (Mine)")
+                            Text(strings.keepLocal)
                         }
                         Button(
                             onClick = { onResolveConflict?.invoke(false) },
                             colors = ButtonDefaults.buttonColors(containerColor = GitRed),
                             modifier = Modifier.weight(1f)
                         ) {
-                            Text("Remote behalten (Theirs)")
+                            Text(strings.keepRemote)
                         }
                     }
                     Spacer(modifier = Modifier.height(8.dp))
@@ -132,7 +135,7 @@ fun DiffViewerDialog(
                     onClick = onDismiss,
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Text("Schließen")
+                    Text(strings.close)
                 }
             }
         }

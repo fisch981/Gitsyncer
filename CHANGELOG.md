@@ -5,6 +5,11 @@ Alle nennenswerten Änderungen an diesem Projekt werden in dieser Datei dokument
 
 ---
 
+## [1.4.2] - 2026-11-23
+
+### Geändert / Hinzugefügt
+- Vollständige Übersetzung aller Screens (Repository-Einstellungen, Detailansicht, Tabs, Diff-Viewer, SSH-Dialoge) auf Deutsch/Englisch / Complete localization of all screens, repository parameters, detail views, diff viewer and SSH dialogs
+
 ## [1.4.1] - 2026-11-23
 
 ### Geändert / Hinzugefügt

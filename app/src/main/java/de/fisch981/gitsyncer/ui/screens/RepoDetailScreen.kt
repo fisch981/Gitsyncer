@@ -30,9 +30,11 @@ import de.fisch981.gitsyncer.data.GitHubRelease
 import de.fisch981.gitsyncer.data.RepositoryStore
 import de.fisch981.gitsyncer.git.GitManager
 import de.fisch981.gitsyncer.model.*
+import de.fisch981.gitsyncer.ui.theme.AppStrings
 import de.fisch981.gitsyncer.ui.theme.GitGreen
 import de.fisch981.gitsyncer.ui.theme.GitOrange
 import de.fisch981.gitsyncer.ui.theme.GitRed
+import de.fisch981.gitsyncer.ui.theme.LocalAppStrings
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -40,13 +42,13 @@ import java.io.File
 import java.text.SimpleDateFormat
 import java.util.*
 
-private fun installApkFile(context: Context, apkFile: File) {
+private fun installApkFile(context: Context, apkFile: File, strings: AppStrings) {
     if (!apkFile.exists()) {
-        Toast.makeText(context, "APK-Datei nicht gefunden", Toast.LENGTH_SHORT).show()
+        Toast.makeText(context, strings.apkFileNotFound, Toast.LENGTH_SHORT).show()
         return
     }
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !context.packageManager.canRequestPackageInstalls()) {
-        Toast.makeText(context, "Bitte Installation aus dieser Quelle erlauben", Toast.LENGTH_LONG).show()
+        Toast.makeText(context, strings.allowInstallFromSource, Toast.LENGTH_LONG).show()
         val permIntent = Intent(
             Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
             Uri.parse("package:${context.packageName}")
@@ -62,7 +64,7 @@ private fun installApkFile(context: Context, apkFile: File) {
         }
         context.startActivity(installIntent)
     } catch (e: Exception) {
-        Toast.makeText(context, "Installation fehlgeschlagen: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
+        Toast.makeText(context, String.format(strings.installFailed, e.localizedMessage), Toast.LENGTH_LONG).show()
     }
 }
 
@@ -83,13 +85,14 @@ fun RepoDetailScreen(
     val repoStore = remember { RepositoryStore.getInstance(context) }
     val gitManager = remember { GitManager(context) }
     val githubApi = remember { GitHubApiClient() }
+    val strings = LocalAppStrings.current
 
     val repoList by repoStore.repositories.collectAsState()
     val repo = repoList.firstOrNull { it.id == repoId }
 
     if (repo == null) {
         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Text("Repository nicht gefunden")
+            Text(strings.repoNotFound)
         }
         return
     }
@@ -116,7 +119,7 @@ fun RepoDetailScreen(
         val parsed = GitHubApiClient.parseOwnerAndRepo(targetRepo.remoteUrl)
         if (parsed == null) {
             releases = emptyList()
-            releaseError = "Keine gültige GitHub-URL erkannt."
+            releaseError = strings.error
             return
         }
         coroutineScope.launch {
@@ -128,7 +131,7 @@ fun RepoDetailScreen(
             res.onSuccess { list ->
                 releases = list
             }.onFailure { err ->
-                releaseError = err.localizedMessage ?: "Fehler beim Laden der Releases"
+                releaseError = err.localizedMessage ?: strings.error
             }
         }
     }
@@ -177,7 +180,7 @@ fun RepoDetailScreen(
                                 color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.8f)
                             ) {
                                 Text(
-                                    text = "Pausiert",
+                                    text = strings.repoPausedBadge,
                                     fontSize = 11.sp,
                                     fontWeight = FontWeight.Bold,
                                     color = MaterialTheme.colorScheme.onErrorContainer,
@@ -189,20 +192,20 @@ fun RepoDetailScreen(
                 },
                 navigationIcon = {
                     IconButton(onClick = onNavigateBack) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = "Zurück")
+                        Icon(Icons.Default.ArrowBack, contentDescription = strings.back)
                     }
                 },
                 actions = {
                     IconButton(
                         onClick = {
                             val newState = repoStore.toggleRepositoryEnabled(repo.id)
-                            val msg = if (newState) "${repo.name} aktiviert" else "${repo.name} pausiert"
+                            val msg = if (newState) "${repo.name}: ${strings.statusSuccess}" else "${repo.name}: ${strings.repoPausedBadge}"
                             Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
                         }
                     ) {
                         Icon(
                             if (repo.isEnabled) Icons.Default.PauseCircleOutline else Icons.Default.PlayCircleOutline,
-                            contentDescription = if (repo.isEnabled) "Pausieren" else "Aktivieren",
+                            contentDescription = if (repo.isEnabled) strings.pauseSync else strings.resumeSync,
                             tint = if (repo.isEnabled) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.primary
                         )
                     }
@@ -213,12 +216,12 @@ fun RepoDetailScreen(
                                 activeSyncJob = null
                                 GitManager.cancelSync(repo.id, repo.localPath)
                                 isLoading = false
-                                repoStore.updateRepoSyncStatus(repo.id, "CANCELLED", "Synchronisation durch Benutzer abgebrochen")
-                                Toast.makeText(context, "Synchronisation abgebrochen", Toast.LENGTH_SHORT).show()
+                                repoStore.updateRepoSyncStatus(repo.id, "CANCELLED", strings.syncAbortedByUser)
+                                Toast.makeText(context, strings.statusCancelled, Toast.LENGTH_SHORT).show()
                                 refreshData()
                             }
                         ) {
-                            Icon(Icons.Default.Close, contentDescription = "Synchronisation abbrechen", tint = MaterialTheme.colorScheme.error)
+                            Icon(Icons.Default.Close, contentDescription = strings.cancel, tint = MaterialTheme.colorScheme.error)
                         }
                     } else {
                         IconButton(
@@ -239,12 +242,12 @@ fun RepoDetailScreen(
                                     }
                                     if (result.success) {
                                         repoStore.updateRepoSyncStatus(repo.id, "SUCCESS")
-                                        val okMsg = if (repo.releaseApksOnly) result.message else "Erfolgreich synchronisiert!"
+                                        val okMsg = if (repo.releaseApksOnly) result.message else strings.statusSuccess
                                         Toast.makeText(context, okMsg, Toast.LENGTH_SHORT).show()
                                     } else {
                                         val status = if (result.conflicts.isNotEmpty()) "CONFLICT" else if (result.message.contains("abgebrochen", ignoreCase = true)) "CANCELLED" else "FAILED"
                                         repoStore.updateRepoSyncStatus(repo.id, status, result.message)
-                                        Toast.makeText(context, "Hinweis: ${result.message}", Toast.LENGTH_LONG).show()
+                                        Toast.makeText(context, "${strings.warning}: ${result.message}", Toast.LENGTH_LONG).show()
                                     }
                                     refreshData()
                                 }
@@ -252,12 +255,12 @@ fun RepoDetailScreen(
                         ) {
                             Icon(
                                 if (repo.releaseApksOnly) Icons.Default.Download else Icons.Default.Sync,
-                                contentDescription = if (repo.releaseApksOnly) "APKs laden" else "Synchronisieren"
+                                contentDescription = if (repo.releaseApksOnly) strings.releaseDownload else strings.syncNow
                             )
                         }
                     }
                     IconButton(onClick = onEditRepo) {
-                        Icon(Icons.Default.Settings, contentDescription = "Einstellungen")
+                        Icon(Icons.Default.Settings, contentDescription = strings.settingsTitle)
                     }
                 }
             )
@@ -273,12 +276,12 @@ fun RepoDetailScreen(
                     Tab(
                         selected = selectedTabIndex == 0,
                         onClick = { selectedTabIndex = 0 },
-                        text = { Text("Release-APKs (${localApks.size})") }
+                        text = { Text(String.format(strings.tabReleaseApks, localApks.size)) }
                     )
                     Tab(
                         selected = selectedTabIndex == 1,
                         onClick = { selectedTabIndex = 1 },
-                        text = { Text("Übersicht") }
+                        text = { Text(strings.tabOverview) }
                     )
                 }
             } else {
@@ -286,17 +289,17 @@ fun RepoDetailScreen(
                     Tab(
                         selected = selectedTabIndex == 0,
                         onClick = { selectedTabIndex = 0 },
-                        text = { Text("Änderungen (${changes.size})") }
+                        text = { Text(String.format(strings.tabChanges, changes.size)) }
                     )
                     Tab(
                         selected = selectedTabIndex == 1,
                         onClick = { selectedTabIndex = 1 },
-                        text = { Text("Historie (${commits.size})") }
+                        text = { Text(String.format(strings.tabHistory, commits.size)) }
                     )
                     Tab(
                         selected = selectedTabIndex == 2,
                         onClick = { selectedTabIndex = 2 },
-                        text = { Text("Übersicht") }
+                        text = { Text(strings.tabOverview) }
                     )
                 }
             }
@@ -331,7 +334,7 @@ fun RepoDetailScreen(
                                             verticalAlignment = Alignment.CenterVertically
                                         ) {
                                             Text(
-                                                "Heruntergeladene APKs",
+                                                strings.downloadedApksTitle,
                                                 fontWeight = FontWeight.Bold,
                                                 style = MaterialTheme.typography.titleMedium
                                             )
@@ -353,7 +356,7 @@ fun RepoDetailScreen(
 
                                         if (localApks.isEmpty()) {
                                             Text(
-                                                "Noch keine APK im Zielordner (${repo.localPath}) vorhanden.",
+                                                String.format(strings.noLocalApksHint, repo.localPath),
                                                 style = MaterialTheme.typography.bodySmall,
                                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                                             )
@@ -384,12 +387,12 @@ fun RepoDetailScreen(
                                                         }
                                                         Spacer(modifier = Modifier.width(8.dp))
                                                         Button(
-                                                            onClick = { installApkFile(context, apkFile) },
+                                                            onClick = { installApkFile(context, apkFile, strings) },
                                                             contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
                                                         ) {
                                                             Icon(Icons.Default.Android, contentDescription = null, modifier = Modifier.size(16.dp))
                                                             Spacer(modifier = Modifier.width(4.dp))
-                                                            Text("Installieren")
+                                                            Text(strings.installApk)
                                                         }
                                                     }
                                                 }
@@ -413,7 +416,7 @@ fun RepoDetailScreen(
                                                     } else {
                                                         val st = if (res.message.contains("abgebrochen", ignoreCase = true)) "CANCELLED" else "FAILED"
                                                         repoStore.updateRepoSyncStatus(repo.id, st, res.message)
-                                                        Toast.makeText(context, "Fehler: ${res.message}", Toast.LENGTH_LONG).show()
+                                                        Toast.makeText(context, "${strings.error}: ${res.message}", Toast.LENGTH_LONG).show()
                                                     }
                                                     refreshData()
                                                 }
@@ -423,7 +426,7 @@ fun RepoDetailScreen(
                                         ) {
                                             Icon(Icons.Default.CloudDownload, contentDescription = null, modifier = Modifier.size(18.dp))
                                             Spacer(modifier = Modifier.width(8.dp))
-                                            Text("Neuestes Release prüfen & laden")
+                                            Text(strings.checkAndDownloadLatestRelease)
                                         }
                                     }
                                 }
@@ -436,7 +439,7 @@ fun RepoDetailScreen(
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Text(
-                                        "GitHub Releases",
+                                        strings.availableReleasesTitle,
                                         fontWeight = FontWeight.Bold,
                                         style = MaterialTheme.typography.titleMedium
                                     )
@@ -444,7 +447,7 @@ fun RepoDetailScreen(
                                         onClick = { refreshReleases(repo) },
                                         enabled = !isFetchingReleases
                                     ) {
-                                        Icon(Icons.Default.Refresh, contentDescription = "Releases aktualisieren")
+                                        Icon(Icons.Default.Refresh, contentDescription = strings.refresh)
                                     }
                                 }
                             }
@@ -466,7 +469,7 @@ fun RepoDetailScreen(
                             } else if (!isFetchingReleases && releases.isEmpty()) {
                                 item {
                                     Text(
-                                        "Keine veröffentlichten GitHub Releases gefunden.",
+                                        strings.noReleasesFound,
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
@@ -534,12 +537,12 @@ fun RepoDetailScreen(
 
                                         if (apkAssets.isEmpty()) {
                                             Text(
-                                                "Keine APK-Dateien in diesem Release.",
+                                                strings.noApksInRelease,
                                                 style = MaterialTheme.typography.bodySmall,
                                                 color = MaterialTheme.colorScheme.outline
                                             )
                                         } else {
-                                            Divider()
+                                            HorizontalDivider()
                                             apkAssets.forEach { asset ->
                                                 Row(
                                                     modifier = Modifier.fillMaxWidth(),
@@ -578,7 +581,7 @@ fun RepoDetailScreen(
                                                                 } else {
                                                                     val st = if (res.message.contains("abgebrochen", ignoreCase = true)) "CANCELLED" else "FAILED"
                                                                     repoStore.updateRepoSyncStatus(repo.id, st, res.message)
-                                                                    Toast.makeText(context, "Fehler: ${res.message}", Toast.LENGTH_LONG).show()
+                                                                    Toast.makeText(context, "${strings.error}: ${res.message}", Toast.LENGTH_LONG).show()
                                                                 }
                                                                 withContext(Dispatchers.IO) {
                                                                     localApks = gitManager.getLocalApkFiles(repo.localPath)
@@ -590,7 +593,7 @@ fun RepoDetailScreen(
                                                     ) {
                                                         Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(16.dp))
                                                         Spacer(modifier = Modifier.width(4.dp))
-                                                        Text("Laden")
+                                                        Text(strings.downloadAction)
                                                     }
                                                 }
                                             }
@@ -613,15 +616,15 @@ fun RepoDetailScreen(
                         ) {
                             Card(modifier = Modifier.fillMaxWidth()) {
                                 Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    Text("Konfigurations-Details", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
-                                    Divider()
-                                    DetailRow("Status:", if (repo.isEnabled) "Aktiv" else "Pausiert (von Sync ausgenommen)")
+                                    Text(strings.configDetails, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
+                                    HorizontalDivider()
+                                    DetailRow(strings.detailStatus, if (repo.isEnabled) strings.active else strings.statusPaused)
                                     Row(
                                         modifier = Modifier.fillMaxWidth(),
                                         horizontalArrangement = Arrangement.SpaceBetween,
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
-                                        Text("Repository aktiv:", fontWeight = FontWeight.Medium)
+                                        Text(strings.repoActive, fontWeight = FontWeight.Medium)
                                         Switch(
                                             checked = repo.isEnabled,
                                             onCheckedChange = { repoStore.toggleRepositoryEnabled(repo.id) }
@@ -632,19 +635,19 @@ fun RepoDetailScreen(
                                         horizontalArrangement = Arrangement.SpaceBetween,
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
-                                        Text("Nur Release-APKs herunterladen:", fontWeight = FontWeight.Medium)
+                                        Text(strings.releaseApksOnlyLabel, fontWeight = FontWeight.Medium)
                                         Switch(
                                             checked = repo.releaseApksOnly,
                                             onCheckedChange = { repoStore.toggleReleaseApksOnly(repo.id) }
                                         )
                                     }
-                                    Divider()
-                                    DetailRow("Modus:", "Nur Release-APKs")
-                                    DetailRow("Geladenes Release:", repo.lastReleaseTag ?: "Noch keines")
-                                    DetailRow("Remote URL:", repo.remoteUrl)
-                                    DetailRow("Lokaler Pfad:", repo.localPath)
-                                    DetailRow("Sync-Intervall:", "${repo.syncIntervalMinutes} Minuten")
-                                    DetailRow("Auto-Sync aktiv:", if (repo.autoSyncEnabled) "Ja" else "Nein")
+                                    HorizontalDivider()
+                                    DetailRow(strings.detailMode, strings.detailModeApksOnly)
+                                    DetailRow(strings.detailLoadedRelease, repo.lastReleaseTag ?: strings.lastSyncNever)
+                                    DetailRow(strings.detailRemoteUrl, repo.remoteUrl)
+                                    DetailRow(strings.detailLocalPath, repo.localPath)
+                                    DetailRow(strings.detailSyncInterval, "${repo.syncIntervalMinutes}m")
+                                    DetailRow(strings.detailAutoSync, if (repo.autoSyncEnabled) strings.yes else strings.no)
                                 }
                             }
 
@@ -654,7 +657,7 @@ fun RepoDetailScreen(
                             ) {
                                 Icon(Icons.Default.Edit, contentDescription = null)
                                 Spacer(modifier = Modifier.width(8.dp))
-                                Text("Repository Konfiguration bearbeiten")
+                                Text(strings.editRepoConfig)
                             }
 
                             OutlinedButton(
@@ -673,7 +676,7 @@ fun RepoDetailScreen(
                                             Toast.makeText(context, res.message, Toast.LENGTH_SHORT).show()
                                         } else {
                                             repoStore.updateRepoSyncStatus(repo.id, "FAILED", res.message)
-                                            Toast.makeText(context, "Fehler: ${res.message}", Toast.LENGTH_LONG).show()
+                                            Toast.makeText(context, "${strings.error}: ${res.message}", Toast.LENGTH_LONG).show()
                                         }
                                         refreshData()
                                     }
@@ -683,7 +686,7 @@ fun RepoDetailScreen(
                             ) {
                                 Icon(Icons.Default.CloudDownload, contentDescription = null)
                                 Spacer(modifier = Modifier.width(8.dp))
-                                Text("Aktuelles Release erneut laden (Force)")
+                                Text(strings.forceRedownloadRelease)
                             }
 
                             if (hasLegacyGitDir) {
@@ -694,7 +697,7 @@ fun RepoDetailScreen(
                                 ) {
                                     Icon(Icons.Default.DeleteOutline, contentDescription = null)
                                     Spacer(modifier = Modifier.width(8.dp))
-                                    Text("Alte Git-Dateien entfernen (nur APKs behalten)")
+                                    Text(strings.cleanOldGitFiles)
                                 }
                             }
                         }
@@ -718,8 +721,8 @@ fun RepoDetailScreen(
                                     OutlinedTextField(
                                         value = commitMessage,
                                         onValueChange = { commitMessage = it },
-                                        label = { Text("Commit Nachricht") },
-                                        placeholder = { Text("z.B. Notizen aktualisiert") },
+                                        label = { Text(strings.commitMessagePlaceholder) },
+                                        placeholder = { Text(strings.commitMessagePlaceholder) },
                                         singleLine = true,
                                         modifier = Modifier.fillMaxWidth()
                                     )
@@ -731,7 +734,7 @@ fun RepoDetailScreen(
                                         Button(
                                             onClick = {
                                                 if (commitMessage.isBlank()) {
-                                                    Toast.makeText(context, "Bitte Nachricht eingeben", Toast.LENGTH_SHORT).show()
+                                                    Toast.makeText(context, strings.pleaseEnterCommitMessage, Toast.LENGTH_SHORT).show()
                                                     return@Button
                                                 }
                                                 coroutineScope.launch {
@@ -749,10 +752,10 @@ fun RepoDetailScreen(
                                                     }
                                                     if (res.success) {
                                                         commitMessage = ""
-                                                        Toast.makeText(context, "Commit & Push erfolgreich!", Toast.LENGTH_SHORT).show()
+                                                        Toast.makeText(context, strings.commitAndPushSuccess, Toast.LENGTH_SHORT).show()
                                                         refreshData()
                                                     } else {
-                                                        Toast.makeText(context, "Fehler: ${res.message}", Toast.LENGTH_LONG).show()
+                                                        Toast.makeText(context, "${strings.error}: ${res.message}", Toast.LENGTH_LONG).show()
                                                     }
                                                 }
                                             },
@@ -761,14 +764,14 @@ fun RepoDetailScreen(
                                         ) {
                                             Icon(Icons.Default.Upload, contentDescription = null, modifier = Modifier.size(18.dp))
                                             Spacer(modifier = Modifier.width(4.dp))
-                                            Text("Commit & Push")
+                                            Text(strings.commitAndPush)
                                         }
 
                                         OutlinedButton(
                                             onClick = { refreshData() },
                                             enabled = !isLoading
                                         ) {
-                                            Icon(Icons.Default.Refresh, contentDescription = "Aktualisieren")
+                                            Icon(Icons.Default.Refresh, contentDescription = strings.refresh)
                                         }
                                     }
                                 }
@@ -791,8 +794,8 @@ fun RepoDetailScreen(
                                             modifier = Modifier.size(48.dp)
                                         )
                                         Spacer(modifier = Modifier.height(8.dp))
-                                        Text("Arbeitsverzeichnis ist sauber", fontWeight = FontWeight.SemiBold)
-                                        Text("Keine ungespeicherten lokalen Änderungen", style = MaterialTheme.typography.bodySmall)
+                                        Text(strings.workingTreeClean, fontWeight = FontWeight.SemiBold)
+                                        Text(strings.workingTreeCleanDesc, style = MaterialTheme.typography.bodySmall)
                                     }
                                 }
                             } else {
@@ -803,10 +806,10 @@ fun RepoDetailScreen(
                                     items(changes) { change ->
                                         val (badgeColor, badgeText) = when (change.changeType) {
                                             ChangeType.MODIFIED -> GitOrange to "MOD"
-                                            ChangeType.ADDED -> GitGreen to "NEU"
+                                            ChangeType.ADDED -> GitGreen to "ADD"
                                             ChangeType.DELETED -> GitRed to "DEL"
                                             ChangeType.UNTRACKED -> MaterialTheme.colorScheme.primary to "UNT"
-                                            ChangeType.CONFLICT -> GitRed to "KONFLIKT"
+                                            ChangeType.CONFLICT -> GitRed to "CONFLICT"
                                         }
 
                                         Card(
@@ -877,7 +880,7 @@ fun RepoDetailScreen(
                                     .padding(16.dp),
                                 contentAlignment = Alignment.Center
                             ) {
-                                Text("Keine Commit-Historie vorhanden")
+                                Text(strings.noCommitHistory)
                             }
                         } else {
                             LazyColumn(
@@ -940,15 +943,15 @@ fun RepoDetailScreen(
                         ) {
                             Card(modifier = Modifier.fillMaxWidth()) {
                                 Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    Text("Konfigurations-Details", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
-                                    Divider()
-                                    DetailRow("Status:", if (repo.isEnabled) "Aktiv" else "Pausiert (von Sync ausgenommen)")
+                                    Text(strings.configDetails, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
+                                    HorizontalDivider()
+                                    DetailRow(strings.detailStatus, if (repo.isEnabled) strings.active else strings.statusPaused)
                                     Row(
                                         modifier = Modifier.fillMaxWidth(),
                                         horizontalArrangement = Arrangement.SpaceBetween,
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
-                                        Text("Repository aktiv:", fontWeight = FontWeight.Medium)
+                                        Text(strings.repoActive, fontWeight = FontWeight.Medium)
                                         Switch(
                                             checked = repo.isEnabled,
                                             onCheckedChange = {
@@ -961,7 +964,7 @@ fun RepoDetailScreen(
                                         horizontalArrangement = Arrangement.SpaceBetween,
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
-                                        Text("Nur Release-APKs herunterladen:", fontWeight = FontWeight.Medium)
+                                        Text(strings.releaseApksOnlyLabel, fontWeight = FontWeight.Medium)
                                         Switch(
                                             checked = repo.releaseApksOnly,
                                             onCheckedChange = {
@@ -969,16 +972,16 @@ fun RepoDetailScreen(
                                             }
                                         )
                                     }
-                                    Divider()
-                                    DetailRow("Modus:", "Komplettes Git-Repo")
-                                    DetailRow("Remote URL:", repo.remoteUrl)
-                                    DetailRow("Branch:", repo.branch)
-                                    DetailRow("Lokaler Pfad:", repo.localPath)
-                                    DetailRow("Auth-Methode:", repo.authType.name)
-                                    DetailRow("Sync-Intervall:", "${repo.syncIntervalMinutes} Minuten")
-                                    DetailRow("Auto-Sync aktiv:", if (repo.autoSyncEnabled) "Ja" else "Nein")
-                                    DetailRow("Richtung:", repo.syncDirection.name)
-                                    DetailRow("Commit Author:", "${repo.authorName} <${repo.authorEmail}>")
+                                    HorizontalDivider()
+                                    DetailRow(strings.detailMode, strings.detailModeFullRepo)
+                                    DetailRow(strings.detailRemoteUrl, repo.remoteUrl)
+                                    DetailRow(strings.detailBranch, repo.branch)
+                                    DetailRow(strings.detailLocalPath, repo.localPath)
+                                    DetailRow(strings.detailAuthType, repo.authType.name)
+                                    DetailRow(strings.detailSyncInterval, "${repo.syncIntervalMinutes}m")
+                                    DetailRow(strings.detailAutoSync, if (repo.autoSyncEnabled) strings.yes else strings.no)
+                                    DetailRow(strings.detailSyncDirection, repo.syncDirection.name)
+                                    DetailRow(strings.detailCommitAuthor, "${repo.authorName} <${repo.authorEmail}>")
                                 }
                             }
 
@@ -988,7 +991,7 @@ fun RepoDetailScreen(
                             ) {
                                 Icon(Icons.Default.Edit, contentDescription = null)
                                 Spacer(modifier = Modifier.width(8.dp))
-                                Text("Repository Konfiguration bearbeiten")
+                                Text(strings.editRepoConfig)
                             }
 
                             OutlinedButton(
@@ -1001,10 +1004,10 @@ fun RepoDetailScreen(
                                         isLoading = false
                                         if (res.success) {
                                             repoStore.updateRepoSyncStatus(repo.id, "SUCCESS")
-                                            Toast.makeText(context, "Dateien erfolgreich wiederhergestellt!", Toast.LENGTH_SHORT).show()
+                                            Toast.makeText(context, strings.restoreMissingFilesSuccess, Toast.LENGTH_SHORT).show()
                                         } else {
                                             repoStore.updateRepoSyncStatus(repo.id, "FAILED", res.message)
-                                            Toast.makeText(context, "Fehler: ${res.message}", Toast.LENGTH_LONG).show()
+                                            Toast.makeText(context, "${strings.error}: ${res.message}", Toast.LENGTH_LONG).show()
                                         }
                                         refreshData()
                                     }
@@ -1013,7 +1016,7 @@ fun RepoDetailScreen(
                             ) {
                                 Icon(Icons.Default.Download, contentDescription = null)
                                 Spacer(modifier = Modifier.width(8.dp))
-                                Text("Fehlende Dateien wiederherstellen (Hard Reset)")
+                                Text(strings.restoreMissingFiles)
                             }
 
                             OutlinedButton(
@@ -1033,10 +1036,10 @@ fun RepoDetailScreen(
                                         }
                                         if (res.success) {
                                             repoStore.updateRepoSyncStatus(repo.id, "SUCCESS")
-                                            Toast.makeText(context, "Erfolgreich sauber neu geklont!", Toast.LENGTH_SHORT).show()
+                                            Toast.makeText(context, strings.cleanRecloneSuccess, Toast.LENGTH_SHORT).show()
                                         } else {
                                             repoStore.updateRepoSyncStatus(repo.id, "FAILED", res.message)
-                                            Toast.makeText(context, "Fehler: ${res.message}", Toast.LENGTH_LONG).show()
+                                            Toast.makeText(context, "${strings.error}: ${res.message}", Toast.LENGTH_LONG).show()
                                         }
                                         refreshData()
                                     }
@@ -1046,7 +1049,7 @@ fun RepoDetailScreen(
                             ) {
                                 Icon(Icons.Default.Refresh, contentDescription = null)
                                 Spacer(modifier = Modifier.width(8.dp))
-                                Text("Repository sauber neu klonen (Reset)")
+                                Text(strings.cleanReclone)
                             }
                         }
                     }
@@ -1058,9 +1061,9 @@ fun RepoDetailScreen(
     if (showCleanupConfirm) {
         AlertDialog(
             onDismissRequest = { showCleanupConfirm = false },
-            title = { Text("Alte Git-Dateien entfernen?") },
+            title = { Text(strings.cleanOldGitFiles) },
             text = {
-                Text("Alle Quellcode-Dateien und der .git-Ordner in '${repo.localPath}' werden entfernt. Vorhandene *.apk-Dateien bleiben erhalten.")
+                Text(String.format(strings.cleanOldGitFilesDesc, repo.localPath))
             },
             confirmButton = {
                 Button(
@@ -1078,12 +1081,12 @@ fun RepoDetailScreen(
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
                 ) {
-                    Text("Bereinigen")
+                    Text(strings.cleanUp)
                 }
             },
             dismissButton = {
                 TextButton(onClick = { showCleanupConfirm = false }) {
-                    Text("Abbrechen")
+                    Text(strings.cancel)
                 }
             }
         )
@@ -1094,7 +1097,7 @@ fun RepoDetailScreen(
         val file = selectedDiffFile!!
         DiffViewerDialog(
             filePath = file.path,
-            diffText = if (isDiffLoading) "Diff wird geladen..." else diffContent,
+            diffText = if (isDiffLoading) strings.diffLoading else diffContent,
             isConflict = file.changeType == ChangeType.CONFLICT,
             onDismiss = { selectedDiffFile = null },
             onResolveConflict = { useLocal ->
@@ -1103,7 +1106,7 @@ fun RepoDetailScreen(
                         gitManager.resolveConflict(repo, file.path, useLocal)
                     }
                     if (resolved) {
-                        Toast.makeText(context, "Konflikt behoben!", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(context, strings.conflictResolved, Toast.LENGTH_SHORT).show()
                         selectedDiffFile = null
                         refreshData()
                     }

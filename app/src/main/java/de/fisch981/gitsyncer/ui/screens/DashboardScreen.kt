@@ -509,7 +509,7 @@ fun RepositoryCard(
                             modifier = Modifier.size(16.dp)
                         )
                         Spacer(modifier = Modifier.width(6.dp))
-                        Text(if (repo.releaseApksOnly) "Releases & APKs" else strings.filesAndDiff)
+                        Text(if (repo.releaseApksOnly) strings.releasesAndApks else strings.filesAndDiff)
                     }
                 }
 
