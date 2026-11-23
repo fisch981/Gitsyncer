@@ -76,5 +76,6 @@ data class SyncResult(
     val message: String,
     val commitsPulled: Int = 0,
     val commitsPushed: Int = 0,
-    val conflicts: List<String> = emptyList()
+    val conflicts: List<String> = emptyList(),
+    val downloadedApkPath: String? = null
 )

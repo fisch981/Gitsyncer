@@ -562,10 +562,12 @@ class GitManager(private val context: Context) {
                 f.exists() && f.isFile && (asset.size <= 0L || f.length() == asset.size)
             }
             if (allLocalPresent) {
+                val latestLocalApk = apkAssets.map { File(targetDir, it.name) }.firstOrNull { it.exists() }
                 progressListener?.invoke("Release ${release.tag_name} ist bereits aktuell", 100)
                 return SyncResult(
                     success = true,
-                    message = "Release ${release.tag_name} ist bereits aktuell (${apkAssets.size} APK)"
+                    message = "Release ${release.tag_name} ist bereits aktuell (${apkAssets.size} APK)",
+                    downloadedApkPath = latestLocalApk?.absolutePath
                 )
             }
         }
@@ -601,11 +603,13 @@ class GitManager(private val context: Context) {
             }
         }
 
+        val latestDownloadedApk = apkAssets.map { File(targetDir, it.name) }.firstOrNull { it.exists() }
         repoStore.updateRepoReleaseInfo(config.id, release.tag_name, expectedMeta)
         progressListener?.invoke("Release ${release.tag_name} heruntergeladen!", 100)
         return SyncResult(
             success = true,
-            message = "Release ${release.tag_name} heruntergeladen (${apkAssets.size} APK)"
+            message = "Release ${release.tag_name} heruntergeladen (${apkAssets.size} APK)",
+            downloadedApkPath = latestDownloadedApk?.absolutePath
         )
     }
 

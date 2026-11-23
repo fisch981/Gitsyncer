@@ -6,6 +6,11 @@ und dieses Projekt hält sich an [Semantic Versioning](https://semver.org/lang/d
 
 ---
 
+## [1.3.3] - 2026-11-23
+
+### Geändert / Hinzugefügt
+- Direktes Installieren bei Klick auf APK-Download-Benachrichtigung, Ordner-Oeffnen bei Repo-Sync, Oeffnen der Repo-Einstellungen bei Fehlern und separate Benachrichtigungen pro gesynctem Repository
+
 ## [1.3.2] - 2026-11-19
 
 ### Geändert / Hinzugefügt
