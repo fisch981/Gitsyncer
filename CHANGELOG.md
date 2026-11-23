@@ -5,6 +5,11 @@ Alle nennenswerten Änderungen an diesem Projekt werden in dieser Datei dokument
 
 ---
 
+## [1.4.0] - 2026-11-23
+
+### Geändert / Hinzugefügt
+- Zweisprachigkeit (Deutsch/Englisch) mit Sprachumschalter direkt in der App (Globus-Symbol oben & in Einstellungen), Open-Source-Lizenz (MIT), Keystore-Auslagerung und zweisprachige README & CHANGELOG / Bilingual support (DE/EN) with in-app language switch, MIT license, keystore externalization and bilingual documentation
+
 ## [1.3.4] - 2026-11-23
 
 ### Geändert / Hinzugefügt

@@ -138,7 +138,16 @@ fun SettingsScreen(
                             FilterChip(
                                 selected = isSelected,
                                 onClick = { repoStore.setAppLanguage(key) },
-                                label = { Text(label, fontSize = 12.sp) }
+                                label = { Text(label, fontSize = 12.sp) },
+                                leadingIcon = if (isSelected) {
+                                    {
+                                        Icon(
+                                            Icons.Default.Check,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                    }
+                                } else null
                             )
                         }
                     }
